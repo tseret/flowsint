@@ -29,3 +29,28 @@ Done:
 
 Next:
 - Write the first own connector with the slim pattern: `InputType`/`OutputType`, `name`, `category`, `scan`, `postprocess`, plus `get_params_schema` if needed.
+
+## 2026-09-30 — local/connectors (base = local/connector-prep @ 75daab45)
+Done:
+- Connector batch 1, 9 auto-registered enrichers:
+  - Keyless: `ip_to_internetdb` (Shodan InternetDB → Port and hostnames), `ip_to_asn_ripestat`, and `asn_to_cidrs_ripestat` (RIPEstat stands in for bgp.he.net, which has no API).
+  - Keyed (Vault): `ip_to_ports_shodan` (`SHODAN_API_KEY`), `ip_to_abuseipdb` (`ABUSEIPDB_API_KEY`), `domain_to_ips_virustotal` and `ip_to_domains_virustotal` (`VT_API_KEY`), `ip_to_threatfox` and `domain_to_threatfox` (`THREATFOX_API_KEY`).
+- Graph semantics:
+  - VirusTotal uses a `PASSIVE_DNS_RESOLVED_TO` edge, domain→ip, in both directions of lookup.
+  - ThreatFox results are filtered client-side against substring and IPv6 lookalikes.
+  - The AbuseIPDB score id is `AbuseIPDB <ip>`.
+  - The RIPEstat ASN name matches asnmap's, so both merge into one node (`AS54113 - fastly`).
+- Tests: 6 new offline test files. The catalog is updated in `docs/sources/available-enrichers.mdx`.
+- Verified:
+  - ruff and typecheck both pass.
+  - `make test`: 58/424/73/17.
+  - Live smoke run: the catalogue lists 58 enrichers, and all 9 run_enricher tasks succeeded with 0 tracebacks. InternetDB found ports 80/443 and 3 hostnames; RIPEstat found AS54113 and 1847 prefixes. The keyed enrichers stop cleanly with a "missing vault secret" message.
+  - Impact check: proceed. Review: one finding fixed (IPv6), two refuted: Shodan only supports `?key=`, and the env-fallback pattern already exists.
+- Known limits:
+  - Port nodes merge per `number (protocol)` across IPs, as in `ip/to_ports.py`.
+  - VirusTotal fetches one page (40 results).
+  - A key set only as an environment variable is ignored when a user vault exists (existing shared behaviour).
+
+Next:
+- Add the keys to the Vault and run the keyed enrichers live.
+- Connector batch 2: Sekoia (STIX objects plus a relationships call) and Driftnet (verify the API contract first).
