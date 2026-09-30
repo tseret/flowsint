@@ -63,4 +63,17 @@ Done:
 - Gate: ruff and mypy pass; `make test` 58/424/73/17. Delta review: correct.
 
 Next:
-- Connector batch 2: Sekoia (STIX objects plus a relationships call) and Driftnet (verify the API contract first).
+- ~~Connector batch 2~~ Sekoia done, see below. Driftnet was not built, see below.
+
+## 2026-09-30 — local/connectors-2 Sekoia (base = local/connectors @ 7722a01c)
+Done:
+- `ip_to_sekoia` and `domain_to_sekoia` (`fb6eef90`) call `GET /v2/inthreat/indicators/context?type=&value=`.
+  - Only malware that a non-revoked indicator `indicates` is linked, as input -ASSOCIATED_WITH-> Malware. Infrastructure and intrusion-set targets are logged only.
+  - 429 stops the loop. A missing key means no request.
+- Rejected `objects?match[value]=`: Sekoia ignores that filter and returned the same 20 unrelated indicators for every IOC. `TH_Department/tools/unified_connector.py` `query_sekoia_cti` has the same bug.
+- Live run: 91.92.41.94 → Remcos (RAT) and melbettr.co → ClearFake (downloader), 0 tracebacks. Both test nodes remain in sketch ea919303.
+- Gate: ruff and mypy pass; `make test` 58/424/79/17. Impact: proceed. Review: correct.
+- Driftnet was not built. The web search page is a client-side SPA over `api.driftnet.io`, which returns 401 without a token. The anonymous token requires a Spur Monocle anti-bot bundle, so automating it would bypass bot protection.
+
+Next:
+- Driftnet API enricher, once a free Community token is in the Vault as `DRIFTNET_API_KEY` (Bearer).
