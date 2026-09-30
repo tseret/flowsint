@@ -233,11 +233,6 @@ class GraphSerializer:
         ]
 
     @staticmethod
-    def serialize_nodes(nodes: List[GraphNode]) -> List[Dict[str, Any]]:
-        """Convert a list of Neo4j node records to GraphNode instances."""
-        return [GraphSerializer.graph_node_to_neo4j_dict(node) for node in nodes]
-
-    @staticmethod
     def serialize_flowsint_types(nodes: List[FlowsintType]) -> List[Dict[str, Any]]:
         """Convert a list of Neo4j node records to GraphNode instances."""
         return [GraphSerializer.flowsint_type_to_neo4j_dict(node) for node in nodes]

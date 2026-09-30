@@ -7,10 +7,8 @@ from .base import Tool
 
 
 class DockerTool(Tool):
-    # Subclasses (SubfinderTool, NaabuTool, ...) set this as a class
-    # attribute with the bare image name — get_image() below reads that,
-    # while __init__ below sets self.image to an instance-level
-    # "name:tag" shadow used for the actual docker calls.
+    # Subclasses set the bare image name; __init__ shadows it per instance
+    # with "name:tag", which is what the docker calls use.
     image: str
 
     def __init__(self, image: str, default_tag: str = "latest") -> None:
@@ -21,10 +19,6 @@ class DockerTool(Tool):
             raise RuntimeError(
                 f"Failed to connect to Docker daemon. Is Docker running? Error: {e}"
             )
-
-    @classmethod
-    def get_image(cls) -> str:
-        return cls.image
 
     def install(self) -> None:
         try:

@@ -21,10 +21,6 @@ def test_category():
     assert tool.category() == "Web technologies enumeration"
 
 
-def test_image():
-    assert tool.get_image() == "projectdiscovery/httpx"
-
-
 def test_install():
     tool.install()
     assert tool.is_installed() is True

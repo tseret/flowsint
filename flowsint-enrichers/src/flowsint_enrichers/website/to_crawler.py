@@ -1,5 +1,4 @@
-from typing import List, Optional
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 from tools.network.reconcrawl import ReconCrawlTool
@@ -37,15 +36,6 @@ class WebsiteToCrawler(Enricher):
     @classmethod
     def key(cls) -> str:
         return "url"
-
-    def is_same_domain(self, url: str, base_domain: str) -> bool:
-        """Check if URL belongs to the same domain."""
-        try:
-            parsed_url = urlparse(url)
-            parsed_base = urlparse(base_domain)
-            return parsed_url.netloc == parsed_base.netloc
-        except Exception:
-            return False
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Crawl websites to extract emails and phone numbers."""
@@ -155,8 +145,8 @@ class WebsiteToCrawler(Enricher):
         return results
 
     def postprocess(
-        self, results: List[OutputType], original_input: List[InputType]
-    ) -> List[OutputType]:
+        self, results: List[Dict[str, Any]], original_input: List[InputType]
+    ) -> List[Dict[str, Any]]:
         # Create Neo4j relationships between websites and their corresponding emails and phones
         for input_website, result in zip(original_input, results):
             website_url = str(input_website.url)

@@ -899,7 +899,7 @@ Consider adding custom validators for complex validation logic that goes beyond 
 @classmethod
 def validate_email(cls, v: str) -> str:
     """Validate and normalize email format."""
-    if not is_valid_email(v):
+    if "@" not in v:
         raise ValueError("Invalid email format")
     return v.lower()
 ```

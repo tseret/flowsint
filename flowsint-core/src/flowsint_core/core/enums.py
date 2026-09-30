@@ -14,11 +14,6 @@ class EventLevel(str, Enum):
     COMPLETED = "COMPLETED"
     GRAPH_APPEND = "GRAPH_APPEND"
 
-    @classmethod
-    def from_lowercase(cls, value: str) -> "EventLevel":
-        """Convert a lowercase string to the corresponding EventLevel enum value"""
-        return cls[value.upper()]
-
     @property
     def lowercase(self) -> str:
         """Get the lowercase version of the enum value"""

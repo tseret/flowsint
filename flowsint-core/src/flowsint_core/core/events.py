@@ -2,34 +2,32 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Dict
-from uuid import UUID
+from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
-from fastapi import FastAPI
 
 
 class EventEmitter:
-    def __init__(self):
+    def __init__(self) -> None:
         self.id = uuid.uuid4()
         self.redis = redis.from_url(os.environ["REDIS_URL"])
         self.pubsubs: Dict[str, redis.client.PubSub] = {}
 
-    async def subscribe(self, channel: str):
+    async def subscribe(self, channel: str) -> None:
         """Subscribe to Redis channel"""
         if channel not in self.pubsubs:
             pubsub = self.redis.pubsub()
             await pubsub.subscribe(channel)
             self.pubsubs[channel] = pubsub
 
-    async def unsubscribe(self, channel: str):
+    async def unsubscribe(self, channel: str) -> None:
         """Unsubscribe from Redis channel"""
         if channel in self.pubsubs:
             await self.pubsubs[channel].unsubscribe(channel)
             await self.pubsubs[channel].close()
             del self.pubsubs[channel]
 
-    async def get_message(self, channel: str = None):
+    async def get_message(self, channel: Optional[str] = None) -> Optional[str]:
         """Get the next message from Redis for a specific channel"""
         if channel not in self.pubsubs:
             return None
@@ -49,22 +47,9 @@ class EventEmitter:
             return str(data)
         return None
 
-    async def emit(self, channel: str, data: any):
+    async def emit(self, channel: str, data: Any) -> None:
         """Emit an event to a Redis channel"""
         await self.redis.publish(channel, json.dumps(data))
 
-    def _is_valid_uuid(self, uuid_str: str) -> bool:
-        """Validate if the string is a valid UUID"""
-        try:
-            UUID(uuid_str)
-            return True
-        except ValueError:
-            return False
-
 
 event_emitter = EventEmitter()
-
-
-def init_events(app: FastAPI):
-    """Initialize the event system in the FastAPI app"""
-    print("[EventEmitter] Events initialized in FastAPI app")

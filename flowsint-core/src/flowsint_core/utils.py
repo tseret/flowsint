@@ -1,5 +1,4 @@
 import inspect
-import ipaddress
 import re
 from typing import Any, Dict, List, Optional, Type
 from urllib.parse import urlparse
@@ -9,26 +8,6 @@ from phonenumbers import NumberParseException
 from pydantic import BaseModel, TypeAdapter
 
 from .core.graph.types import GraphEdge, GraphNode
-
-
-def is_valid_ip(address: str) -> bool:
-    try:
-        ipaddress.ip_address(address)
-        return True
-    except ValueError:
-        return False
-
-
-def is_valid_username(username: str) -> bool:
-    if not re.match(r"^[a-zA-Z0-9_-]{3,30}$", username):
-        return False
-    return True
-
-
-def is_valid_email(email: str) -> bool:
-    if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
-        return False
-    return True
 
 
 def is_valid_domain(url_or_domain: str) -> bool:
@@ -113,12 +92,6 @@ def is_valid_number(phone: str, region: str = "FR") -> bool:
     return True
 
 
-def parse_asn(asn: str) -> int:
-    if not is_valid_asn(asn):
-        raise ValueError(f"Invalid ASN format: {asn}")
-    return int(re.sub(r"(?i)^AS", "", asn))
-
-
 def is_valid_asn(asn: str) -> bool:
     if not re.fullmatch(r"(AS)?\d+", asn, re.IGNORECASE):
         return False
@@ -181,49 +154,6 @@ def extract_input_schema_flow(model: Type[BaseModel]) -> Dict[str, Any]:
         "type": "type",
         "category": model.__name__,
     }
-
-
-def extract_enricher(enricher: Dict[str, Any]) -> Dict[str, Any]:
-    nodes = enricher["nodes"]
-    edges = enricher["edges"]
-
-    input_node = next((node for node in nodes if node["data"]["type"] == "type"), None)
-    if not input_node:
-        raise ValueError("No input node found.")
-    input_output = input_node["data"]["outputs"]
-    node_lookup = {node["id"]: node for node in nodes}
-
-    enrichers = []
-    for edge in edges:
-        target_id = edge["target"]
-        source_handle = edge["sourceHandle"]
-        target_handle = edge["targetHandle"]
-
-        enricher_node = node_lookup.get(target_id)
-        if enricher_node and enricher_node["data"]["type"] == "enricher":
-            enrichers.append(
-                {
-                    "enricher_name": enricher_node["data"]["name"],
-                    "module": enricher_node["data"]["module"],
-                    "input": source_handle,
-                    "output": target_handle,
-                }
-            )
-
-    return {
-        "input": {
-            "name": input_node["data"]["name"],
-            "outputs": input_output,
-        },
-        "enrichers": enrichers,
-        "enricher_names": [enricher["enricher_name"] for enricher in enrichers],
-    }
-
-
-def get_label_color(label: str) -> str:
-    color_map = {"subdomain": "#A5ABB6", "domain": "#68BDF6", "default": "#A5ABB6"}
-
-    return color_map.get(label, color_map["default"])
 
 
 Primitive = (str, int, float, bool)

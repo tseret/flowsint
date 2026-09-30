@@ -20,10 +20,6 @@ def test_category():
     assert tool.category() == "Port scanning"
 
 
-def test_image():
-    assert tool.get_image() == "projectdiscovery/naabu"
-
-
 def test_install():
     tool.install()
     assert tool.is_installed() is True
