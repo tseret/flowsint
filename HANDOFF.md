@@ -63,7 +63,7 @@ Done:
 - Gate: ruff and mypy pass; `make test` 58/424/73/17. Delta review: correct.
 
 Next:
-- ~~Connector batch 2~~ Sekoia done, see below. Driftnet was not built, see below.
+- ~~Connector batch 2~~ Sekoia and Driftnet done, see below.
 
 ## 2026-09-30 — local/connectors-2 Sekoia (base = local/connectors @ 7722a01c)
 Done:
@@ -73,7 +73,15 @@ Done:
 - Rejected `objects?match[value]=`: Sekoia ignores that filter and returned the same 20 unrelated indicators for every IOC. `TH_Department/tools/unified_connector.py` `query_sekoia_cti` has the same bug.
 - Live run: 91.92.41.94 → Remcos (RAT) and melbettr.co → ClearFake (downloader), 0 tracebacks. Both test nodes remain in sketch ea919303.
 - Gate: ruff and mypy pass; `make test` 58/424/79/17. Impact: proceed. Review: correct.
-- Driftnet was not built. The web search page is a client-side SPA over `api.driftnet.io`, which returns 401 without a token. The anonymous token requires a Spur Monocle anti-bot bundle, so automating it would bypass bot protection.
+- Driftnet anonymous (web SPA) access was rejected: its token requires a Spur Monocle anti-bot bundle. It was built on the Bearer API instead, see below.
+
+## 2026-09-30 — local/connectors-2 Driftnet (base = local/connectors @ 7722a01c)
+Done:
+- `ip_to_ports_driftnet` (`d8326d7a`, plus the token-redaction fix `979fe3d5`) calls `GET https://api.driftnet.io/v1/scan/ports?ip=` with Bearer auth. It creates `Port(number, protocol="tcp", state="open")` and an ip -HAS_PORT-> Port edge.
+  - Behavior: a honeypot flag is logged as a warning. 403/429 stops the loop, with the token redacted from the logged body. Other non-200 responses skip that input.
+- The Vault entry `DRIFNET_API_KEY` (typo) was renamed to `DRIFTNET_API_KEY`. Only the name column changed; AES-GCM AAD is owner_id.
+- Live run through the mounted branch source: the key resolved, the request was sent, and Driftnet returned `403 api usage limit hit`. That was logged, the loop stopped, 0 tracebacks. `admin/user` shows quota 1001/1000 with `next_reset` 2026-06-07 (in the past). No live data response has been verified; the mapping follows the documented example.
+- Gate: ruff and mypy pass; `make test` 58/424/84/17. Impact: proceed. Review: correct (after the redaction fix).
 
 Next:
-- Driftnet API enricher, once a free Community token is in the Vault as `DRIFTNET_API_KEY` (Bearer).
+- When the Driftnet quota is back, run `ip_to_ports_driftnet` on 8.8.8.8 and confirm the ports match the documented `values` shape.
