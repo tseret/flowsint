@@ -27,6 +27,13 @@ PAYLOAD = {
                 "date": 1700000000,
             }
         },
+        {  # real pDNS junk Domain rejects; must not drop the rows after it
+            "attributes": {
+                "ip_address": "1.2.3.4",
+                "host_name": "_.map.fastly.net",
+                "date": 1591813960,
+            }
+        },
         {
             "attributes": {
                 "ip_address": "5.6.7.8",

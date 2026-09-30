@@ -6,7 +6,7 @@ from flowsint_types.ip import Ip
 MOD = "flowsint_enrichers.ip.to_shodan"
 
 PAYLOAD = {
-    "hostnames": ["example.com", "www.example.com", "example.com"],
+    "hostnames": ["example.com", "_.map.fastly.net", "www.example.com", "example.com"],
     "data": [
         {
             "port": 443,

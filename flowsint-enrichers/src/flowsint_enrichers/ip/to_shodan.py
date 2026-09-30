@@ -93,7 +93,10 @@ class IpToPortsShodanEnricher(Enricher):
                     self._ports.append((ip, port))
 
                 for hostname in dict.fromkeys(payload.get("hostnames") or []):
-                    self._domains.append((ip, Domain(domain=hostname)))
+                    try:
+                        self._domains.append((ip, Domain(domain=hostname)))
+                    except ValueError:  # skip names Domain rejects, keep the rest
+                        continue
             except Exception as e:
                 Logger.error(
                     self.sketch_id,

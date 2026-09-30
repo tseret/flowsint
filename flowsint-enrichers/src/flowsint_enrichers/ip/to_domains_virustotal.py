@@ -88,7 +88,10 @@ class IpToDomainsVirusTotal(Enricher):
                         )
 
                 for host, ts in last_seen.items():
-                    domain = Domain(domain=host)
+                    try:
+                        domain = Domain(domain=host)
+                    except ValueError:  # pDNS holds names like "_.x.fastly.net"
+                        continue
                     date = (
                         datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
                         .date()
