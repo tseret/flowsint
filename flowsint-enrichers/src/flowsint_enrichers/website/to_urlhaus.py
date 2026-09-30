@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
 from flowsint_enrichers.domain.to_urlhaus import query_urlhaus
+from flowsint_enrichers.file.to_malwarebazaar import fill_file
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.file import File
 from flowsint_types.website import Website
@@ -58,15 +59,13 @@ class WebsiteToUrlhaus(Enricher):
                 if not sha or sha in seen:
                     continue
                 seen.add(sha)
-                name = entry.get("filename")
-                file = File(
-                    filename=sha,
+                name, size = entry.get("filename"), str(entry.get("response_size"))
+                file = fill_file(
+                    File(filename=sha),
                     hash_sha256=sha,
                     hash_md5=(entry.get("response_md5") or "").lower() or None,
                     file_type=entry.get("file_type"),
-                    file_size=int(entry["response_size"])
-                    if entry.get("response_size")
-                    else None,
+                    file_size=int(size) if size.isdigit() else None,
                     is_malicious=True,
                     malware_family=entry.get("signature"),
                     source="URLhaus",

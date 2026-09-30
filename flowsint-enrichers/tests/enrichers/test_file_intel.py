@@ -82,16 +82,19 @@ async def test_malwarebazaar_enriches_label_file_and_links_family(monkeypatch):
     )
     monkeypatch.setattr(enricher, "log_graph_message", lambda *a: None)
 
-    # Hash typed as the node label only: the filename is the lookup key.
-    file = File(filename=MD5.upper())
+    # Hash typed as the node label only: the filename is the lookup key. Built
+    # like the launch route does (full dump), so every None field counts as set.
+    file = File.model_validate(
+        File(filename=MD5.upper()).model_dump(mode="json", serialize_as_any=True)
+    )
     [malware] = await enricher.scan([file])
     enricher.postprocess([malware], [file])
 
     assert calls[0][1] == {"query": "get_info", "hash": MD5}
-    assert (malware.name, malware.source, malware.first_seen) == (
+    assert (malware.name, malware.source, malware.sample_hashes) == (
         "RemcosRAT",
         "MalwareBazaar",
-        "2026-09-30 15:34:19",
+        [SHA],
     )
     [(enriched, target, rel)] = edges
     assert (target, rel) == (malware, "ASSOCIATED_WITH")
@@ -112,6 +115,7 @@ async def test_malwarebazaar_enriches_label_file_and_links_family(monkeypatch):
         "mime_type",
         "is_malicious",
         "malware_family",
+        "source",
     }
 
 

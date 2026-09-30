@@ -34,13 +34,13 @@ def query_urlhaus(
             )
             return None
         payload: Dict[str, Any] = response.json()
+        status = payload.get("query_status")
     except Exception as e:
         Logger.error(
             sketch_id, {"message": f"(URLhaus) Request for '{term}' failed: {e}"}
         )
         return None
 
-    status = payload.get("query_status")
     if status == "no_results":
         Logger.info(sketch_id, {"message": f"(URLhaus) No result for '{term}'."})
         return None

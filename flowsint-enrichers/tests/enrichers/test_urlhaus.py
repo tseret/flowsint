@@ -97,7 +97,12 @@ async def test_host_lookup_maps_unique_valid_urls(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload, status",
-    [({"query_status": "no_results"}, 200), ({}, 504), ({"query_status": "x"}, 200)],
+    [
+        ({"query_status": "no_results"}, 200),
+        ({}, 504),
+        ({"query_status": "x"}, 200),
+        ([], 200),
+    ],
 )
 async def test_no_results_and_failures_return_nothing(monkeypatch, payload, status):
     enricher, _ = _setup(monkeypatch, IpToUrlhaus, payload, status=status)
@@ -136,6 +141,7 @@ async def test_website_payloads_become_hash_files(monkeypatch):
             },
             {"response_sha256": SHA},  # same payload served twice
             {"response_sha256": None},
+            {"response_sha256": "ab" * 32, "response_size": "unknown"},
         ],
     }
     enricher, calls = _setup(monkeypatch, WebsiteToUrlhaus, payload)
@@ -148,8 +154,8 @@ async def test_website_payloads_become_hash_files(monkeypatch):
     monkeypatch.setattr(enricher, "log_graph_message", lambda *a: None)
     site = Website(url="http://1.2.3.4:5555/i")
 
-    [file] = await enricher.scan([site])
-    enricher.postprocess([file], [site])
+    [file, unsized] = await enricher.scan([site])
+    enricher.postprocess([file, unsized], [site])
 
     assert calls == [
         ("https://urlhaus-api.abuse.ch/v1/url/", {"url": "http://1.2.3.4:5555/i"})
@@ -161,4 +167,5 @@ async def test_website_payloads_become_hash_files(monkeypatch):
         True,
     )
     assert file.description == "Served as 'i'"
-    assert edges == [(site, file, "SERVES_PAYLOAD")]
+    assert (unsized.hash_sha256, unsized.file_size) == ("ab" * 32, None)
+    assert edges == [(site, file, "SERVES_PAYLOAD"), (site, unsized, "SERVES_PAYLOAD")]
