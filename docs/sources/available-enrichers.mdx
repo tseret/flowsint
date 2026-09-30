@@ -67,6 +67,9 @@ Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
 **domain_to_sekoia**: Malware indicated by a domain in the Sekoia Intelligence Center.
 Tools/APIs: [Sekoia CTI API](https://docs.sekoia.com/cti/features/integrations/api/)
 
+**domain_to_urlhaus**: Malware distribution URLs hosted on a domain, from URLhaus.
+Tools/APIs: [URLhaus API](https://urlhaus-api.abuse.ch/)
+
 ### Email
 **email_to_breaches**: Check whether an email appears in known breaches.
 Tools/APIs: [Have I Been Pwned API](https://haveibeenpwned.com/API/v3)
@@ -88,6 +91,16 @@ Tools/APIs: [DeHashed API](https://www.dehashed.com/docs)
 
 **email_to_device_hudsonrock**: Look up devices compromised by infostealers and associated with an email.
 Tools/APIs: [HudsonRock API](https://www.hudsonrock.com/)
+
+### File
+**file_to_malwarebazaar**: Malware family and file metadata for a hash (MD5/SHA1/SHA256) in MalwareBazaar.
+Tools/APIs: [MalwareBazaar API](https://bazaar.abuse.ch/api/)
+
+**file_to_threatfox**: Malware families linked to a file hash in ThreatFox.
+Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
+
+**file_to_virustotal**: Detection ratio, threat label and metadata for a file hash.
+Tools/APIs: [VirusTotal API v3](https://docs.virustotal.com/reference/file-info)
 
 ### Individual
 **individual_to_domains**: Find domains registered by a specific person; extract related contacts and attributes.
@@ -139,6 +152,9 @@ Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
 **ip_to_sekoia**: Malware indicated by an IP in the Sekoia Intelligence Center.
 Tools/APIs: [Sekoia CTI API](https://docs.sekoia.com/cti/features/integrations/api/)
 
+**ip_to_urlhaus**: Malware distribution URLs hosted on an IP, from URLhaus.
+Tools/APIs: [URLhaus API](https://urlhaus-api.abuse.ch/)
+
 ### Organization
 **org_to_domains**: Find domains registered by an organization; extract contacts and related entities.
 Tools/APIs: [Whoxy API](https://www.whoxy.com/api/)
@@ -187,6 +203,9 @@ Tools/APIs: reconspread Crawler
 
 **website_to_text**: Fetch and extract visible text from a webpage.
 Tools/APIs: HTTP GET, [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)
+
+**website_to_urlhaus**: Malware payloads (as File hashes) a URL served, from URLhaus.
+Tools/APIs: [URLhaus API](https://urlhaus-api.abuse.ch/)
 
 **website_to_webtrackers**: Extract analytics/ads tracking codes from a website.
 Tools/APIs: recontrack TrackingCodeExtractor
