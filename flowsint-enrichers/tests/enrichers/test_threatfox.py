@@ -84,6 +84,23 @@ async def test_ip_maps_merges_and_drops_substring_hits(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ipv6_matches_bare_and_bracketed_port_only(monkeypatch):
+    payload = {
+        "query_status": "ok",
+        "data": [
+            _ioc("2001:db8::1", "ip"),
+            _ioc("[2001:db8::1]:443", "ip:port"),
+            _ioc("[2001:db8::10]:443", "ip:port"),
+        ],
+    }
+    enricher, _ = _setup(monkeypatch, IpToThreatFox, payload)
+
+    [m] = await enricher.scan([Ip(address="2001:db8::1")])
+
+    assert m.indicators == ["2001:db8::1", "[2001:db8::1]:443"]
+
+
+@pytest.mark.asyncio
 async def test_domain_keeps_exact_and_url_host_drops_lookalikes(monkeypatch):
     payload = {
         "query_status": "ok",

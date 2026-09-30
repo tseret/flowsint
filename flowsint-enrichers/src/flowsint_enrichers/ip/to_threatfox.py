@@ -128,10 +128,8 @@ class IpToThreatFox(Enricher):
         for ip in data:
             # ioc is the bare IP or "IP:port" ("[v6]:port"); anything else is a substring hit.
             def matches(entry: Dict[str, Any], ip: Ip = ip) -> bool:
-                ioc = str(entry.get("ioc", ""))
-                return (
-                    ioc == ip.address or ioc.rsplit(":", 1)[0].strip("[]") == ip.address
-                )
+                ioc, address = str(entry.get("ioc", "")), str(ip.address)
+                return ioc == address or ioc.rsplit(":", 1)[0].strip("[]") == address
 
             for malware in search_threatfox(
                 self.sketch_id, api_key, ip.address, matches
