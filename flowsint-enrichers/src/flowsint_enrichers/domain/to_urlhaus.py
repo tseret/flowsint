@@ -33,7 +33,7 @@ def query_urlhaus(
                 {"message": f"(URLhaus) HTTP {response.status_code} for '{term}'."},
             )
             return None
-        payload = response.json()
+        payload: Dict[str, Any] = response.json()
     except Exception as e:
         Logger.error(
             sketch_id, {"message": f"(URLhaus) Request for '{term}' failed: {e}"}
