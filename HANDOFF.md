@@ -104,3 +104,11 @@ Done:
 
 Next:
 - `phone_to_breaches` is not implemented. Driftnet data mapping remains unverified until its API quota resets.
+
+## 2026-09-30 — repair deployed ip_to_asn
+Done:
+- The stock image's `DockerTool(image, default_tag)` conflicted with the mounted checkout's `AsnmapTool()`, which expects the checkout's no-argument DockerTool constructor. Extended the git-excluded local Compose override to mount `dockertool.py` and the five other DockerTool network subclasses together for API and Celery. No image or database changes.
+- Recreated API and Celery with `make up-prod`; all six DockerTool network subclasses instantiate in the worker. A real `ip_to_asn` Celery task on the existing smoke sketch completed and returned `AS54113 - fastly` for `151.101.128.223`. `make test`: 58/424/104/17 passed.
+
+Next:
+- The override remains local and git-excluded; preserve it on this workstation or bake the compatible source into a future image.
