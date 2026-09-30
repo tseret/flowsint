@@ -85,3 +85,13 @@ Done:
 
 Next:
 - When the Driftnet quota is back, run `ip_to_ports_driftnet` on 8.8.8.8 and confirm the ports match the documented `values` shape.
+
+## 2026-09-30 — local/connectors-2 file hashes and URLhaus (base = local/connectors @ 7722a01c)
+Done:
+- Added File hash lookups in MalwareBazaar, ThreatFox and VirusTotal; URLhaus host lookups for IP/domain and URL payload lookup for websites. Kept Driftnet unchanged pending quota reset.
+- File updates preserve the original label and omit null fields even for UI-launched nodes; per-file samples are represented by File -ASSOCIATED_WITH-> Malware edges, not an overwritten shared Malware sample list.
+- Gate: ruff and mypy pass; `make test` 58/424/104/17. Impact: proceed. Final delta review: correct.
+- Live smoke: URLhaus IP→websites and website→payload; MalwareBazaar→RemcosRAT, ThreatFox→AMOS, VirusTotal 10/54. Corrected worker rerun retained one File node with MalwareBazaar source/family and VirusTotal verdict, 0 tracebacks. Production compose stack restored.
+
+Next:
+- Driftnet response-shape verification remains waiting for its API quota reset. Optional next connector: VirusTotal domain/IP reputation (reuse the existing VT vault key and request pattern).
