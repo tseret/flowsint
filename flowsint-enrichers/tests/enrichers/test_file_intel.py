@@ -91,10 +91,12 @@ async def test_malwarebazaar_enriches_label_file_and_links_family(monkeypatch):
     enricher.postprocess([malware], [file])
 
     assert calls[0][1] == {"query": "get_info", "hash": MD5}
+    # No per-file sample_hashes: the family node is shared, SET += would clobber;
+    # the File -> Malware edge records each sample.
     assert (malware.name, malware.source, malware.sample_hashes) == (
         "RemcosRAT",
         "MalwareBazaar",
-        [SHA],
+        None,
     )
     [(enriched, target, rel)] = edges
     assert (target, rel) == (malware, "ASSOCIATED_WITH")
