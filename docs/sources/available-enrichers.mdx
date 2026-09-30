@@ -13,6 +13,9 @@ last_updated_at: "2026-05-15"
 **asn_to_cidrs**: Given an ASN, enumerate its announced CIDR ranges.
 Tools/Pivots: [asnmap](https://github.com/projectdiscovery/asnmap) (CLI), [jq](https://jqlang.github.io/jq/) (CLI)
 
+**asn_to_cidrs_ripestat**: Given an ASN, list its announced prefixes (keyless alternative to asnmap).
+Tools/APIs: [RIPEstat announced-prefixes](https://stat.ripe.net/docs/data-api/api-endpoints/announced-prefixes)
+
 ### CIDR
 **cidr_to_ips**: Expand a CIDR to IPs by PTR enumeration heuristics.
 Tools/Pivots: [dnsx](https://github.com/projectdiscovery/dnsx) (CLI)
@@ -54,6 +57,12 @@ Tools/APIs: [WhoisXML API](https://whois.whoisxmlapi.com/)
 
 **domain_to_dehashed**: Get breach intelligence (credentials, related individuals) associated with a domain.
 Tools/APIs: [DeHashed API](https://www.dehashed.com/docs)
+
+**domain_to_ips_virustotal**: Historical IPs a domain resolved to (passive DNS; edge `PASSIVE_DNS_RESOLVED_TO`, not current DNS).
+Tools/APIs: [VirusTotal API v3](https://docs.virustotal.com/reference/domains-relationships)
+
+**domain_to_threatfox**: Malware families linked to a domain or its URLs in ThreatFox.
+Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
 
 ### Email
 **email_to_breaches**: Check whether an email appears in known breaches.
@@ -102,6 +111,24 @@ Tools/APIs: [Scamalytics API](https://scamalytics.com/ip-api)
 
 **ip_to_intelligence**: Get breach intelligence (credentials, related individuals) associated with an IP.
 Tools/APIs: [DeHashed API](https://www.dehashed.com/docs)
+
+**ip_to_internetdb**: Open ports, hostnames and known vulns for an IP, keyless.
+Tools/APIs: [Shodan InternetDB](https://internetdb.shodan.io/)
+
+**ip_to_ports_shodan**: Open ports with service and banner for an IP.
+Tools/APIs: [Shodan API](https://developer.shodan.io/api)
+
+**ip_to_asn_ripestat**: Map IPs to their ASN, keyless.
+Tools/APIs: [RIPEstat network-info / as-overview](https://stat.ripe.net/docs/data-api)
+
+**ip_to_abuseipdb**: AbuseIPDB abuse-confidence score and report context for an IP.
+Tools/APIs: [AbuseIPDB API v2](https://docs.abuseipdb.com/)
+
+**ip_to_domains_virustotal**: Historical domains seen resolving to an IP (passive DNS).
+Tools/APIs: [VirusTotal API v3](https://docs.virustotal.com/reference/ip-relationships)
+
+**ip_to_threatfox**: Malware families linked to an IP (incl. `ip:port` IOCs) in ThreatFox.
+Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
 
 ### Organization
 **org_to_domains**: Find domains registered by an organization; extract contacts and related entities.
