@@ -52,5 +52,15 @@ Done:
   - A key set only as an environment variable is ignored when a user vault exists (existing shared behaviour).
 
 Next:
-- Add the keys to the Vault and run the keyed enrichers live.
+- ~~Add the keys to the Vault and run the keyed enrichers live.~~ Done, see below.
+- Connector batch 2: Sekoia (STIX objects plus a relationships call) and Driftnet (verify the API contract first).
+
+## 2026-09-30 — local/connectors live keyed run (base = local/connector-prep @ 75daab45)
+Done:
+- The Vault now holds SHODAN, ABUSEIPDB, VT and THREATFOX keys. All 6 keyed enrichers were run live on 151.101.128.223 / python.org: 6 tasks succeeded, 0 tracebacks.
+  - Shodan: 80/443 plus the python.org and www.python.org hostnames. AbuseIPDB: score 0. ThreatFox: no hits (expected). VT domain→ips: 23 historic IPs.
+- Fix `f1f74873`: VT pDNS returned `_.python.map.fastly.net`, which `Domain` rejects, and the exception dropped the rest of the page. VT ip→domains and Shodan now skip invalid hostnames one at a time. The live rerun went from 35 to 39 domains with 0 exceptions. A regression fixture fails 3 tests without the fix.
+- Gate: ruff and mypy pass; `make test` 58/424/73/17. Delta review: correct.
+
+Next:
 - Connector batch 2: Sekoia (STIX objects plus a relationships call) and Driftnet (verify the API contract first).
