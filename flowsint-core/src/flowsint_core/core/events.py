@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import redis.asyncio as redis
 
@@ -11,41 +11,32 @@ class EventEmitter:
     def __init__(self) -> None:
         self.id = uuid.uuid4()
         self.redis = redis.from_url(os.environ["REDIS_URL"])
-        self.pubsubs: Dict[str, redis.client.PubSub] = {}
 
-    async def subscribe(self, channel: str) -> None:
-        """Subscribe to Redis channel"""
-        if channel not in self.pubsubs:
-            pubsub = self.redis.pubsub()
+    async def subscribe(self, channel: str) -> redis.client.PubSub:
+        """Give each stream its own Redis subscription to this channel."""
+        pubsub: redis.client.PubSub = self.redis.pubsub()
+        try:
             await pubsub.subscribe(channel)
-            self.pubsubs[channel] = pubsub
+        except BaseException:
+            await pubsub.aclose()
+            raise
+        return pubsub
 
-    async def unsubscribe(self, channel: str) -> None:
-        """Unsubscribe from Redis channel"""
-        if channel in self.pubsubs:
-            await self.pubsubs[channel].unsubscribe(channel)
-            await self.pubsubs[channel].close()
-            del self.pubsubs[channel]
+    async def unsubscribe(self, pubsub: redis.client.PubSub) -> None:
+        """Close only this stream's subscription."""
+        await pubsub.aclose()
 
-    async def get_message(self, channel: Optional[str] = None) -> Optional[str]:
-        """Get the next message from Redis for a specific channel"""
-        if channel not in self.pubsubs:
-            return None
-
-        message = await self.pubsubs[channel].get_message(
-            ignore_subscribe_messages=True
-        )
+    async def get_message(self, pubsub: redis.client.PubSub) -> Optional[str]:
+        """Get the next message from this stream's subscription."""
+        message = await pubsub.get_message(ignore_subscribe_messages=True)
         if message is None:
             await asyncio.sleep(0.1)
             return None
 
-        if message:
-            data = message["data"]
-            if isinstance(data, bytes):
-                decoded = data.decode("utf-8")
-                return decoded
-            return str(data)
-        return None
+        data = message["data"]
+        if isinstance(data, bytes):
+            return data.decode("utf-8")
+        return str(data)
 
     async def emit(self, channel: str, data: Any) -> None:
         """Emit an event to a Redis channel"""

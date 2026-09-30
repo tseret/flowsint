@@ -112,3 +112,12 @@ Done:
 
 Next:
 - The override remains local and git-excluded; preserve it on this workstation or bake the compatible source into a future image.
+
+## 2026-09-30 — live case refresh
+Done:
+- Fixed shared Redis pubsub consumption for sketch log and status SSE streams: each connected viewer now owns a subscription, and closing one viewer no longer disconnects others. The local production override bind-mounts the matching core emitter and API route into the stock image; no frontend build or database change.
+- Reproduced the failure with two case tabs (one Redis subscriber per channel despite two viewers). After `make up-prod`, Redis showed two log and two status subscribers. A live `ip_to_asn_ripestat` scan of `105.174.46.30` added AS37119 and refreshed both graphs from 13 to 14 nodes without reload; the console showed start, graph edge and completion. Closing one tab left one subscriber per channel; a second scan refreshed the surviving graph and console.
+- Verified `make test` (58/425/104/17 passed), Python ruff format/check (358 files), targeted mypy for the changed core/API routes, and browser-relay smoke on the actual case.
+
+Next:
+- Keep `docker-compose.local.yml` alongside this checkout to retain the SSE fix and connector mounts; it is intentionally git-excluded. Reload any case tab left open across API recreation so it reconnects to the new stream.
