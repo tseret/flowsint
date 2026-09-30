@@ -9,8 +9,8 @@ Done:
 - Verified: ruff, `make typecheck BASE_REF=4c05849b`, `make test` (58/416/36/17 passed). Frontend `make lint` step not run: yarn/node_modules absent locally, and no frontend code was changed.
 
 Next:
-- Start stack: `docker compose -f docker-compose.prod.yml -f docker-compose.local.yml up -d` (not `make prod`, which drops the override). Stop: `make down`.
-- New patched/added enricher files must also be bind-mounted in `docker-compose.local.yml` (the image copy of `flowsint-enrichers/src` differs from HEAD in `social/to_maigret.py`, so the whole dir is not mounted).
+- Start stack: `make prod` or `make up-prod` now includes `docker-compose.local.yml` when present; stop with `make down`. The local override is intentionally git-excluded and must remain beside the repo to load the connectors.
+- Patched and added enricher files are bind-mounted individually in `docker-compose.local.yml`; avoid mounting the whole source tree because the image's database/schema and checkout differ.
 - ASN/CIDR enrichers need `PDCP_API_KEY` in Vault; a missing key or Docker error only shows in the sketch logs, the UI shows an empty result.
 
 ## 2026-09-30 — local/connector-prep (base = local/eval-fixes @ 605c7ad1)
@@ -95,3 +95,12 @@ Done:
 
 Next:
 - Driftnet response-shape verification remains waiting for its API quota reset. Optional next connector: VirusTotal domain/IP reputation (reuse the existing VT vault key and request pattern).
+
+## 2026-09-30 — deploy local connectors to the running stack
+Done:
+- The git-excluded `docker-compose.local.yml` now mounts all 18 added enricher modules plus the checkout's Enricher base (`key()` must not be abstract) into both API and Celery, retaining the stock core/API image and existing ASN patches.
+- `make prod`, `make up-prod`, and other production targets automatically apply that override when present. No image was published; no database migration or volume reset was performed.
+- API and worker each register 67 enrichers; the authenticated API catalog returns 66 visible entries (the internal dummy is excluded). All 18 additions instantiate in the worker. A `website_to_urlhaus` launch through the API logged started, served a payload, finished; no worker traceback after the fix. `make up-prod` preserved all 67 registrations.
+
+Next:
+- `phone_to_breaches` is not implemented. Driftnet data mapping remains unverified until its API quota resets.

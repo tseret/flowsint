@@ -1,7 +1,7 @@
 PROJECT_ROOT := $(shell pwd)
 
 COMPOSE_DEV    := docker compose -f docker-compose.dev.yml
-COMPOSE_PROD   := docker compose -f docker-compose.prod.yml
+COMPOSE_PROD   := docker compose -f docker-compose.prod.yml $(if $(wildcard docker-compose.local.yml),-f docker-compose.local.yml)
 
 .PHONY: \
 	dev prod \
