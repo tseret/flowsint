@@ -163,7 +163,7 @@ class AsnToCidrsEnricher(Enricher):
                         type="cidr",
                     )
 
-                    asn_obj = ASN(number=asn.number)
+                    asn_obj = ASN(asn_str=f"AS{asn.number}")
                     cidr_obj = CIDR(network=str(cidr.network))
                     self.create_relationship(asn_obj, cidr_obj, "ANNOUNCES")
 

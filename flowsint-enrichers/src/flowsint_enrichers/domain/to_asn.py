@@ -76,13 +76,9 @@ class DomainToAsnEnricher(Enricher):
                 asn_data = asnmap.launch(domain.domain, type="domain", api_key=api_key)
 
                 if asn_data and "as_number" in asn_data:
-                    # Parse ASN number from string like "AS16276" to integer 16276
-                    asn_string = asn_data["as_number"]
-                    asn_number = int(asn_string.replace("AS", "").replace("as", ""))
-
-                    # Create ASN object with correct field mapping
+                    # asn_str is required; the validator normalizes "as16276" and derives number
                     asn = ASN(
-                        number=asn_number,
+                        asn_str=asn_data["as_number"],
                         name=asn_data.get("as_name", ""),
                         country=asn_data.get("as_country", ""),
                         description=asn_data.get("as_name", ""),
