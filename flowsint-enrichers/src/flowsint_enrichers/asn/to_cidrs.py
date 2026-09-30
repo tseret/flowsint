@@ -121,51 +121,17 @@ class AsnToCidrsEnricher(Enricher):
     def postprocess(
         self, results: List[OutputType], original_input: List[InputType]
     ) -> List[OutputType]:
-        # Create Neo4j relationships between ASNs and their corresponding CIDRs
-        # Use the mapping from scan if available, else fallback to zip
-        asn_to_cidrs = getattr(self, "_asn_to_cidrs_map", None)
-        if asn_to_cidrs is not None:
-            for asn, cidr_list in asn_to_cidrs:
-                for cidr in cidr_list:
-                    if str(cidr.network) == "0.0.0.0/0":
-                        continue  # Skip default CIDR for unknown ASN
-                    if self._graph_service:
-                        self.create_node(asn)
-
-                        self.create_node(cidr)
-
-                        self.create_relationship(asn, cidr, "ANNOUNCES")
-
-                        self.log_graph_message(
-                            f"AS{asn.number} announces CIDR {cidr.network}"
-                        )
-        else:
-            # Fallback: original behavior (one-to-one zip)
-            for asn, cidr in zip(original_input, results):
+        # Create Neo4j relationships between ASNs and their corresponding CIDRs (mapping built in scan)
+        for asn, cidr_list in getattr(self, "_asn_to_cidrs_map", []):
+            for cidr in cidr_list:
                 if str(cidr.network) == "0.0.0.0/0":
                     continue  # Skip default CIDR for unknown ASN
                 if self._graph_service:
-                    self.create_node(
-                        "asn",
-                        "number",
-                        asn.number,
-                        label=f"AS{asn.number}",
-                        caption=f"AS{asn.number}",
-                        type="asn",
-                    )
+                    self.create_node(asn)
 
-                    self.create_node(
-                        "cidr",
-                        "network",
-                        str(cidr.network),
-                        label=str(cidr.network),
-                        caption=str(cidr.network),
-                        type="cidr",
-                    )
+                    self.create_node(cidr)
 
-                    asn_obj = ASN(asn_str=f"AS{asn.number}")
-                    cidr_obj = CIDR(network=str(cidr.network))
-                    self.create_relationship(asn_obj, cidr_obj, "ANNOUNCES")
+                    self.create_relationship(asn, cidr, "ANNOUNCES")
 
                     self.log_graph_message(
                         f"AS{asn.number} announces CIDR {cidr.network}"
