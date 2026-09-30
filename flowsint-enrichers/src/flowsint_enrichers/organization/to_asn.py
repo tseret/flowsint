@@ -32,6 +32,7 @@ class OrgToAsnEnricher(Enricher):
             vault=vault,
             params=params,
         )
+        self.org_asn_mapping: List[tuple[Organization, ASN]] = []
 
     @classmethod
     def required_params(cls) -> bool:
@@ -64,6 +65,7 @@ class OrgToAsnEnricher(Enricher):
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find ASN information for organizations using asnmap."""
         results: List[OutputType] = []
+        self.org_asn_mapping = []
         asnmap = AsnmapTool()
 
         # Retrieve API key from vault or environment
@@ -82,6 +84,7 @@ class OrgToAsnEnricher(Enricher):
                         description=asn_data.get("as_name", ""),
                     )
                     results.append(asn)
+                    self.org_asn_mapping.append((org, asn))
                     Logger.info(
                         self.sketch_id,
                         {
@@ -107,8 +110,9 @@ class OrgToAsnEnricher(Enricher):
     def postprocess(
         self, results: List[OutputType], original_input: List[InputType]
     ) -> List[OutputType]:
-        # Create Neo4j relationships between organizations and their corresponding ASNs
-        for input_org, result_asn in zip(original_input, results):
+        # Create Neo4j relationships between organizations and their corresponding ASNs.
+        # Pairs come from scan: zipping inputs with results misaligns when a lookup fails.
+        for input_org, result_asn in self.org_asn_mapping:
             # Skip if no valid ASN was found
             if result_asn.number == 0:
                 continue

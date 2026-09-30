@@ -16,8 +16,11 @@ ASNMAP_ROW = {
 
 
 class _FakeAsnmap:
+    def __init__(self, misses=()):
+        self.misses = set(misses)
+
     def launch(self, item, type="domain", api_key=None):
-        return ASNMAP_ROW
+        return {} if item in self.misses else ASNMAP_ROW
 
 
 class _NoLogger:
@@ -50,3 +53,29 @@ async def test_scan_builds_asn_from_asnmap_row(monkeypatch, module, enricher_cls
         "fastly",
         "US",
     )
+
+
+@pytest.mark.asyncio
+async def test_org_postprocess_pairs_each_org_with_its_own_asn(monkeypatch):
+    monkeypatch.setattr(
+        "flowsint_enrichers.organization.to_asn.AsnmapTool",
+        lambda: _FakeAsnmap(misses={"unknown-org"}),
+    )
+    monkeypatch.setattr("flowsint_enrichers.organization.to_asn.Logger", _NoLogger)
+    enricher = OrgToAsnEnricher(sketch_id="s", scan_id="t")
+    monkeypatch.setattr(enricher, "get_secret", lambda *a, **k: "key")
+    edges = []
+    enricher._graph_service = object()
+    monkeypatch.setattr(enricher, "create_node", lambda node: None)
+    monkeypatch.setattr(enricher, "log_graph_message", lambda msg: None)
+    monkeypatch.setattr(
+        enricher,
+        "create_relationship",
+        lambda src, dst, rel: edges.append((src.name, dst.asn_str, rel)),
+    )
+    orgs = [Organization(name="unknown-org"), Organization(name="fastly")]
+
+    results = await enricher.scan(orgs)
+    enricher.postprocess(results, orgs)
+
+    assert edges == [("fastly", "AS54113", "BELONGS_TO")]
