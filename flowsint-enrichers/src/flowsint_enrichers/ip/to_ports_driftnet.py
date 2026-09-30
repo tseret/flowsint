@@ -58,10 +58,11 @@ class IpToPortsDriftnetEnricher(Enricher):
                 )
                 if response.status_code in (403, 429):
                     # Quota and rate limits are per token: every later call fails too.
+                    body = response.text.replace(api_key, "<redacted>")[:200]
                     Logger.error(
                         self.sketch_id,
                         {
-                            "message": f"[Driftnet] HTTP {response.status_code}: {response.text[:200]}; stopping."
+                            "message": f"[Driftnet] HTTP {response.status_code}: {body}; stopping."
                         },
                     )
                     break

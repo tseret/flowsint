@@ -67,6 +67,23 @@ async def test_other_errors_skip_input_but_quota_403_stops(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_error_body_echoing_token_is_redacted_in_logs(monkeypatch):
+    e, _ = _enricher(monkeypatch, [], key="s3cr3t-token")
+    resp = _Resp(403)
+    resp.text = '{"message": "invalid token s3cr3t-token"}'
+    monkeypatch.setattr(f"{MOD}.requests.get", lambda *a, **k: resp)
+    logged = []
+    monkeypatch.setattr(
+        f"{MOD}.Logger.error", lambda sid, msg: logged.append(msg["message"])
+    )
+
+    await e.scan([Ip(address="10.0.0.1")])
+
+    assert len(logged) == 1
+    assert "s3cr3t-token" not in logged[0] and "<redacted>" in logged[0]
+
+
+@pytest.mark.asyncio
 async def test_missing_key_makes_no_request(monkeypatch):
     e, calls = _enricher(monkeypatch, [], key=None)
 
