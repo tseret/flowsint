@@ -54,7 +54,7 @@ class AsnmapTool(DockerTool):
     def launch(
         self,
         item: str,
-        type: Literal["domain", "organization", "ip", "asn"] = "domain",
+        type: Literal["domain", "org", "ip", "asn"] = "domain",
         api_key: str = None,
     ) -> Any:
         flags = {"domain": "-d", "org": "-org", "ip": "-i", "asn": "-a"}

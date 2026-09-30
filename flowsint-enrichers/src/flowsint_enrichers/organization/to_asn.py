@@ -5,6 +5,7 @@ from tools.network.asnmap import AsnmapTool
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
+from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.asn import ASN
 from flowsint_types.organization import Organization
@@ -22,7 +23,7 @@ class OrgToAsnEnricher(Enricher):
         self,
         sketch_id: Optional[str] = None,
         scan_id: Optional[str] = None,
-        vault=None,
+        vault: Optional[VaultProtocol] = None,
         params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
