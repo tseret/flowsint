@@ -1,5 +1,5 @@
 import json
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from ..dockertool import DockerTool
 
@@ -8,7 +8,7 @@ class AsnmapTool(DockerTool):
     image = "projectdiscovery/asnmap"
     default_tag = "latest"
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(self.image, self.default_tag)
 
     @classmethod
@@ -55,7 +55,7 @@ class AsnmapTool(DockerTool):
         self,
         item: str,
         type: Literal["domain", "org", "ip", "asn"] = "domain",
-        api_key: str = None,
+        api_key: Optional[str] = None,
     ) -> Any:
         flags = {"domain": "-d", "org": "-org", "ip": "-i", "asn": "-a"}
         if type not in flags:
@@ -81,8 +81,9 @@ class AsnmapTool(DockerTool):
                     return json.loads(lines[0])
                 else:
                     # Multiple JSON objects - combine them
-                    combined_data = {
-                        "as_range": [],
+                    as_range: list[str] = []
+                    combined_data: dict[str, Any] = {
+                        "as_range": as_range,
                         "as_name": None,
                         "as_country": None,
                         "as_number": None,
@@ -94,7 +95,7 @@ class AsnmapTool(DockerTool):
                         try:
                             data = json.loads(line)
                             if "as_range" in data:
-                                combined_data["as_range"].extend(data["as_range"])
+                                as_range.extend(data["as_range"])
                             if data.get("as_name") and not combined_data["as_name"]:
                                 combined_data["as_name"] = data["as_name"]
                             if (
