@@ -29,10 +29,6 @@ class DomainToTLS(Enricher):
     def category(cls) -> str:
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
 

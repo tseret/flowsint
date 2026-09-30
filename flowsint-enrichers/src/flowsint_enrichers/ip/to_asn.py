@@ -29,7 +29,6 @@ class IpToAsnEnricher(Enricher):
         super().__init__(
             sketch_id=sketch_id,
             scan_id=scan_id,
-            params_schema=self.get_params_schema(),
             vault=vault,
             params=params,
         )
@@ -58,10 +57,6 @@ class IpToAsnEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Ip"
-
-    @classmethod
-    def key(cls) -> str:
-        return "address"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []

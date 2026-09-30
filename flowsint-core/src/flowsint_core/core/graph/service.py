@@ -5,7 +5,7 @@ This module provides a service layer for graph operations,
 integrating repository and logging functionality.
 """
 
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, cast
 
 from pydantic import BaseModel
 
@@ -80,13 +80,12 @@ class GraphService:
 
     def create_node(self, node_obj: GraphNode) -> str | None:
         """
-        Create or update a node in the graph.
+        Create or update a node from a GraphNode.
 
-        Supports one signatures:
-         - GraphNode object: create_node(obj)
+        Use create_node_from_flowsint_type() for FlowsintType objects.
 
         Args:
-            node_obj: a GraphNode object
+            node_obj: GraphNode to store
         """
 
         if isinstance(node_obj, FlowsintType):
@@ -107,16 +106,16 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+        return None
 
     def create_node_from_flowsint_type(self, node_obj: FlowsintType) -> str | None:
         """
-        Create or update a node in the graph.
+        Create or update a node from a FlowsintType.
 
-        Supports one signatures:
-         - FlowsintType object: create_node(obj)
+        Use create_node() for GraphNode objects.
 
         Args:
-            node_obj: a FlowsintType object
+            node_obj: FlowsintType to store
         """
 
         if isinstance(node_obj, GraphNode):
@@ -139,6 +138,7 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+        return None
 
     def get_sketch_graph(self) -> GraphData:
         graph_data = self.repository.get_sketch_graph(self.sketch_id)
@@ -165,16 +165,12 @@ class GraphService:
         rel_label: str = "IS_RELATED_TO",
     ) -> None:
         """
-        Create a relationship between two nodes.
-
-        Supports 1 signature:
-         - Pydantic objects: create_relationship(obj1, obj2, "rel_label")
+        Create a relationship between two nodes, matched by type and label.
 
         Args:
-            from_obj: A GraphNode object (source)
-            to_obj: A GraphNode object (target)
-            rel_label: Relationship label (ex: "IS_CONNECTED_TO")
-            **properties: Additional relationship properties
+            from_obj: FlowsintType or GraphNode (source)
+            to_obj: FlowsintType or GraphNode (target)
+            rel_label: Relationship type (e.g. "IS_CONNECTED_TO")
         """
 
         neo4j_rel_dict: GraphDict = GraphSerializer.graph_edge_to_neo4j_dict(
@@ -198,7 +194,7 @@ class GraphService:
         from_element_id: str,
         to_element_id: str,
         rel_label: str = "IS_RELATED_TO",
-    ):
+    ) -> Optional[Dict[str, Any]]:
         return self._repository.create_relationship_by_element_id(
             from_element_id=from_element_id,
             to_element_id=to_element_id,
@@ -308,7 +304,7 @@ class GraphService:
         if self._enable_batching:
             self._repository.flush_batch()
 
-    def query(self, cypher: str, parameters: Dict[str, Any] = None) -> list:
+    def query(self, cypher: str, parameters: Optional[Dict[str, Any]] = None) -> list:
         """
         Execute a custom Cypher query.
 
@@ -319,7 +315,7 @@ class GraphService:
         Returns:
             List of result records
         """
-        return self._repository.query(cypher, parameters)
+        return self._repository.query(cypher, parameters)  # type: ignore[arg-type]  # protocol omits Optional; callers pass None
 
     def set_batch_size(self, size: int) -> None:
         """
@@ -330,11 +326,11 @@ class GraphService:
         """
         self._repository.set_batch_size(size)
 
-    def __enter__(self):
+    def __enter__(self) -> "GraphService":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush()
@@ -368,7 +364,7 @@ def create_graph_service(
     return GraphService(
         sketch_id=sketch_id,
         repository=repository,
-        logger=Logger,
+        logger=cast(LoggerProtocol, Logger),
         enable_batching=enable_batching,
         type_resolver=type_resolver,
     )

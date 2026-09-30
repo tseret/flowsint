@@ -19,6 +19,13 @@ Done:
 - The changed-files mypy gate required annotations only, with no behaviour change: `flows.py` routes, `events.py`, `to_crawler.postprocess`, `imports/utils.py`, `registry.py`.
 - Verified: ruff, `make typecheck BASE_REF=605c7ad1`, `make test` (58/416/36/17). Smoke run with the whole branch `src/` mounted into api+celery: `/api/flows/raw_materials` and `/api/flows/input_type/*` return 200; ip_to_asn → AS54113 and asn_to_cidrs succeeded, 0 tracebacks.
 - Known skew: with the branch source mounted, `GET /api/flows` returns 500 (`flows.owner_id` missing) because the image's DB predates that migration. This is unrelated to this diff.
+- Batch 2, enricher base simplification with no behaviour change:
+  - `params_schema` defaults to `get_params_schema()`.
+  - `key()` defaults to the new `Enricher.primary_field()`. Only the 12 enrichers whose key differs still override it.
+  - `DockerTool` subclasses only set `image` (and optionally `default_tag`).
+  - Graph docstrings and the developer docs are fixed.
+  - The changed-files mypy gate required annotation-only fixes in the touched files, plus a few narrow `type: ignore`s.
+  - Verified: ruff; typecheck ×4; `make test` 58/424/36/17; the live smoke run (ip_to_asn, domain_to_dns and asn_to_cidrs all produced results, 0 tracebacks). Impact check: proceed. Review: resolved.
 
 Next:
-- Batch 2 (not approved yet): default `params_schema` in `enricher_base.py:127` so the forwarding `__init__`s can go; make `key()` non-abstract; slim down the Docker tool wrappers; fix the stale `create_node`/`create_relationship` docstrings.
+- Write the first own connector with the slim pattern: `InputType`/`OutputType`, `name`, `category`, `scan`, `postprocess`, plus `get_params_schema` if needed.

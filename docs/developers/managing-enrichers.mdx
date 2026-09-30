@@ -49,10 +49,8 @@ class MyEnricher(Enricher):
         """Category this enricher belongs to."""
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        """Primary key field name for this enricher."""
-        return "domain"
+    # key() defaults to InputType's primary field ("domain" here);
+    # override it only when the enricher keys on a different field.
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Core enriching logic."""
@@ -121,10 +119,6 @@ class DomainToIpEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Domain"
-
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
 
     @classmethod
     def documentation(cls) -> str:
@@ -260,10 +254,6 @@ class SubdomainEnricher(Enricher):
     def category(cls) -> str:
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
-
 # Export types
 InputType = SubdomainEnricher.InputType
 OutputType = SubdomainEnricher.OutputType
@@ -388,10 +378,6 @@ class IpToPortsEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "IP"
-
-    @classmethod
-    def key(cls) -> str:
-        return "address"
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:

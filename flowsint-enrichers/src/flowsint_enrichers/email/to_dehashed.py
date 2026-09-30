@@ -6,7 +6,6 @@ import requests
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
-from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.email import Email
 from flowsint_types.individual import Individual
@@ -19,21 +18,6 @@ class EmailToDehashed(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Email
     OutputType = Individual
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault: Optional[VaultProtocol] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     # @classmethod
     # def required_params(cls) -> bool:
@@ -58,10 +42,6 @@ class EmailToDehashed(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Email"
-
-    @classmethod
-    def key(cls) -> str:
-        return "email"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []

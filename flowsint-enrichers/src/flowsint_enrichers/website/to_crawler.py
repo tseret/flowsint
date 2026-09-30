@@ -33,10 +33,6 @@ class WebsiteToCrawler(Enricher):
     def category(cls) -> str:
         return "Website"
 
-    @classmethod
-    def key(cls) -> str:
-        return "url"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Crawl websites to extract emails and phone numbers."""
         results = []

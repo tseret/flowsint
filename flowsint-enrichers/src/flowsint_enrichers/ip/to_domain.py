@@ -25,10 +25,6 @@ class ReverseResolveEnricher(Enricher):
     def category(cls) -> str:
         return "Ip"
 
-    @classmethod
-    def key(cls) -> str:
-        return "address"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
 

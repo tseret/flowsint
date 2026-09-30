@@ -78,9 +78,7 @@ class Enricher(ABC):
         def category(cls):
             return "Domain"
 
-        @classmethod
-        def key(cls):
-            return "domain"
+        # key() defaults to InputType's primary field; override only if it differs.
 
         # preprocess receives a list and returns a list of validated InputType instances
         def preprocess(self, data: List) -> List[InputType]:
@@ -124,7 +122,9 @@ class Enricher(ABC):
         self.scan_id = scan_id or "default"
         self.sketch_id = sketch_id or "system"
         self.vault = vault
-        self.params_schema = params_schema or []
+        self.params_schema = (
+            self.get_params_schema() if params_schema is None else params_schema
+        )
         self.ParamsModel = build_params_model(self.params_schema)
         self.params: Dict[str, Any] = params or {}
 
@@ -213,9 +213,26 @@ class Enricher(ABC):
         pass
 
     @classmethod
-    @abstractmethod
-    def key(cls) -> str:
+    def key(cls) -> Optional[str]:
         """Primary key on which the enricher operates (e.g. domain, IP, etc.)"""
+        return cls.primary_field()
+
+    @classmethod
+    def primary_field(cls) -> Optional[str]:
+        """InputType field flagged primary, else its first required field, else its first field."""
+        base_type = cls.InputType
+        if not (isinstance(base_type, type) and issubclass(base_type, BaseModel)):
+            return None
+        fields = base_type.model_fields
+        for name, field in fields.items():
+            if isinstance(
+                field.json_schema_extra, dict
+            ) and field.json_schema_extra.get("primary"):
+                return name
+        for name, field in fields.items():
+            if field.is_required():
+                return name
+        return next(iter(fields), None)
 
     @classmethod
     def documentation(cls) -> str:
@@ -373,21 +390,7 @@ class Enricher(ABC):
 
         base_type = self.InputType
         adapter = TypeAdapter(base_type)
-
-        primary_field = None
-        if issubclass(base_type, BaseModel):
-            for name, field in base_type.model_fields.items():
-                if field.json_schema_extra and field.json_schema_extra.get("primary"):
-                    primary_field = name
-                    break
-            if primary_field is None:
-                # fallback : premier champ requis ou premier champ disponible
-                for name, field in base_type.model_fields.items():
-                    if field.is_required():
-                        primary_field = name
-                        break
-                if primary_field is None:
-                    primary_field = next(iter(base_type.model_fields.keys()))
+        primary_field = self.primary_field()
 
         cleaned = []
 
@@ -449,22 +452,16 @@ class Enricher(ABC):
 
     def create_node(self, node_obj: FlowsintType) -> None:
         """
-        Create a single Neo4j node.
+        Create or update a Neo4j node for a FlowsintType in the current sketch.
 
-        The following properties are automatically added to every node:
-        - type: Lowercase version of node_type
-        - sketch_id: Current sketch ID from enricher context
-        - label: Automatically computed by FlowsintType, or defaults to key_value if not provided
-        - created_at: ISO 8601 UTC timestamp (only on creation, not updates)
+        The node's type and label come from the object (its computed nodeLabel).
 
-        Use Pydantic object directly:
             ```python
             self.create_node(ip)
             ```
 
         Args:
-            node_obj: Either a Pydantic object or node label string
-            **properties: Additional node properties or overrides
+            node_obj: FlowsintType instance to store
         """
         self._graph_service.create_node_from_flowsint_type(node_obj=node_obj)
 
@@ -475,18 +472,17 @@ class Enricher(ABC):
         rel_label: str = "IS_RELATED_TO",
     ) -> None:
         """
-        Create a relationship between two nodes.
+        Create a relationship between two nodes, matched by type and label.
 
-        Best Practice - Use Pydantic objects directly:
             ```python
             self.create_relationship(individual, domain, "HAS_DOMAIN")
             self.create_relationship(email, breach, "FOUND_IN_BREACH")
             ```
 
         Args:
-            from_obj: Either a Pydantic object (source) or source node label
-            to_obj: Either a Pydantic object (target) or source node key property
-            rel_label: Either relationship type (Pydantic) or source node key value
+            from_obj: FlowsintType instance (source)
+            to_obj: FlowsintType instance (target)
+            rel_label: Relationship type (e.g. "HAS_DOMAIN")
         """
         self._graph_service.create_relationship(
             from_obj=from_obj, to_obj=to_obj, rel_label=rel_label

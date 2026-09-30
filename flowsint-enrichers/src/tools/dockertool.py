@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from docker import from_env
 from docker.errors import APIError, DockerException, ImageNotFound
@@ -10,9 +10,10 @@ class DockerTool(Tool):
     # Subclasses set the bare image name; __init__ shadows it per instance
     # with "name:tag", which is what the docker calls use.
     image: str
+    default_tag = "latest"
 
-    def __init__(self, image: str, default_tag: str = "latest") -> None:
-        self.image = f"{image}:{default_tag}"
+    def __init__(self) -> None:
+        self.image = f"{self.image}:{self.default_tag}"
         try:
             self.client = from_env()
         except Exception as e:
@@ -51,7 +52,7 @@ class DockerTool(Tool):
 
     def launch(
         self,
-        command: str,
+        command: str | List[str],
         volumes: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
         environment: Optional[Dict[str, Any]] = None,

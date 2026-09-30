@@ -29,7 +29,6 @@ class OrgToAsnEnricher(Enricher):
         super().__init__(
             sketch_id=sketch_id,
             scan_id=scan_id,
-            params_schema=self.get_params_schema(),
             vault=vault,
             params=params,
         )
@@ -58,10 +57,6 @@ class OrgToAsnEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Organization"
-
-    @classmethod
-    def key(cls) -> str:
-        return "name"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find ASN information for organizations using asnmap."""

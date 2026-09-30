@@ -1,5 +1,5 @@
 import hashlib
-from typing import List
+from typing import Any, List
 
 import requests
 
@@ -17,7 +17,7 @@ class EmailToGravatarEnricher(Enricher):
     InputType = Email
     OutputType = Gravatar
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.email_gravatar_mapping: List[tuple[Email, Gravatar]] = []
 
@@ -28,10 +28,6 @@ class EmailToGravatarEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Email"
-
-    @classmethod
-    def key(cls) -> str:
-        return "email"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []

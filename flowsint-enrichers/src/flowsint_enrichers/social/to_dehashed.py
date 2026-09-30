@@ -6,7 +6,6 @@ import requests
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
-from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.individual import Individual
 from flowsint_types.username import Username
@@ -19,21 +18,6 @@ class UsernameToDehashed(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Username
     OutputType = Individual
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault: Optional[VaultProtocol] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     # @classmethod
     # def required_params(cls) -> bool:

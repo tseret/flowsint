@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from dotenv import load_dotenv
 from tools.network.whoxy import WhoxyTool
@@ -24,21 +24,6 @@ class OrgToDomainsEnricher(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Organization
     OutputType = Domain
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def required_params(cls) -> bool:
@@ -64,16 +49,16 @@ class OrgToDomainsEnricher(Enricher):
     def category(cls) -> str:
         return "Organization"
 
-    @classmethod
-    def key(cls) -> str:
-        return "name"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find domains related to organizations using whoxy api."""
         domains: List[OutputType] = []
         self._extracted_data = []  # Store all extracted data for postprocess
-        self._extracted_individuals = []  # Store extracted individuals for testing
-        self._extracted_organizations = []  # Store extracted organizations for testing
+        self._extracted_individuals: List[
+            Dict[str, Any]
+        ] = []  # Store extracted individuals for testing
+        self._extracted_organizations: List[
+            Dict[str, Any]
+        ] = []  # Store extracted organizations for testing
         api_key = self.get_secret("WHOXY_API_KEY", os.getenv("WHOXY_API_KEY"))
 
         for org in data:
@@ -126,7 +111,7 @@ class OrgToDomainsEnricher(Enricher):
                 )
         return domains
 
-    def __process_contacts_during_scan(self, extracted_info: Dict[str, Any]):
+    def __process_contacts_during_scan(self, extracted_info: Dict[str, Any]) -> None:
         """Process contacts and extract individuals and organizations during scan method."""
         org_name = extracted_info["org"].name
         domain_name = extracted_info["domain"].domain
@@ -355,7 +340,7 @@ class OrgToDomainsEnricher(Enricher):
         contact_type: str,
         domain_name: str,
         org_name: str,
-    ):
+    ) -> None:
         """Extract additional non-redacted information from contact data."""
         # Extract country information
         country_name = contact.get("country_name", "")

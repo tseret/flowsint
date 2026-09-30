@@ -1,11 +1,10 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from tools.network.asnmap import AsnmapTool
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
-from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.asn import ASN
 from flowsint_types.cidr import CIDR
@@ -18,21 +17,6 @@ class AsnToCidrsEnricher(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = ASN
     OutputType = CIDR
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault: Optional[VaultProtocol] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def required_params(cls) -> bool:

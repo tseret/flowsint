@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import requests
 import requests.exceptions
@@ -14,7 +14,7 @@ from flowsint_types.wallet import CryptoWallet, CryptoWalletTransaction
 load_dotenv()
 
 
-def wei_to_eth(wei_str):
+def wei_to_eth(wei_str: str) -> float:
     return int(wei_str) / 10**18
 
 
@@ -25,21 +25,6 @@ class CryptoWalletAddressToTransactions(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = CryptoWallet
     OutputType = CryptoWalletTransaction
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def required_params(cls) -> bool:
@@ -76,10 +61,6 @@ class CryptoWalletAddressToTransactions(Enricher):
     def category(cls) -> str:
         return "CryptoWallet"
 
-    @classmethod
-    def key(cls) -> str:
-        return "address"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
         api_key = self.get_secret("ETHERSCAN_API_KEY", os.getenv("ETHERSCAN_API_KEY"))
@@ -102,7 +83,7 @@ class CryptoWalletAddressToTransactions(Enricher):
     ) -> List[CryptoWalletTransaction]:
         transactions = []
         """Get transactions for a wallet address."""
-        params = {
+        params: Dict[str, Any] = {
             "module": "account",
             "action": "txlist",
             "address": address,
