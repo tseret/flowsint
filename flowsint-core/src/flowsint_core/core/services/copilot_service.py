@@ -259,3 +259,81 @@ def summary_messages(
             ),
         ),
     ], truncated
+
+
+def candidate_review_evidence(
+    rows: list[dict[str, Any]], selected_ids: set[str]
+) -> dict[str, Any]:
+    """Group bounded, existing graph associations without launching discovery."""
+    candidates: dict[str, dict[str, Any]] = {}
+    truncated = len(rows) > 200
+    dns = {"PASSIVE_DNS_RESOLVED_TO", "REVERSE_RESOLVES_TO"}
+    for row in rows[:200]:
+        source_id, candidate_id = (
+            str(row.get("source_id", "")),
+            str(row.get("node_id", "")),
+        )
+        relations = row.get("relationships")
+        evidence_type = row.get("evidence_type")
+        if (
+            source_id not in selected_ids
+            or not candidate_id
+            or candidate_id in selected_ids
+            or row.get("candidate_type") != "ip"
+            or not isinstance(relations, list)
+            or len(relations) != 2
+            or not all(isinstance(rel, str) for rel in relations)
+            or not (
+                evidence_type == "domain"
+                and all(rel in dns for rel in relations)
+                or evidence_type == "phrase"
+                and set(relations) == {"HAS_MODAT_PIVOT", "MATCHES_MODAT_PIVOT"}
+            )
+        ):
+            continue
+        if candidate_id not in candidates:
+            if len(candidates) >= 20:
+                truncated = True
+                continue
+            candidates[candidate_id] = {
+                "node_id": candidate_id,
+                "label": str(row.get("label", candidate_id))[:200],
+                "evidence": [],
+            }
+        candidate = candidates[candidate_id]
+        if len(candidate["evidence"]) >= 5:
+            truncated = True
+            continue
+        observations = []
+        raw_observations = row.get("observations") or []
+        if not isinstance(raw_observations, list):
+            raw_observations = []
+            truncated = True
+        truncated |= len(raw_observations) > 10
+        for raw in raw_observations[:10]:
+            try:
+                observation = json.loads(raw) if isinstance(raw, str) else raw
+            except (ValueError, TypeError):
+                continue
+            if isinstance(observation, dict):
+                safe, clipped = _safe_context(observation)
+                observations.append(safe)
+                truncated |= clipped
+        path = {
+            "source_id": source_id,
+            "source_label": str(row.get("source_label", source_id))[:200],
+            "evidence_id": str(row.get("evidence_id", ""))[:200],
+            "evidence_label": str(row.get("evidence_label", ""))[:1000],
+            "relationships": relations,
+            "observations": observations,
+        }
+        # Case findings accept 20k characters of evidence. Leave room for the
+        # wrapper and keep supporting paths when observation details are large.
+        while observations and len(json.dumps(candidate["evidence"] + [path])) > 18000:
+            observations.pop()
+            truncated = True
+        if len(json.dumps(candidate["evidence"] + [path])) > 18000:
+            truncated = True
+            continue
+        candidate["evidence"].append(path)
+    return {"candidates": list(candidates.values()), "truncated": truncated}

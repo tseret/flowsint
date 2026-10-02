@@ -3,7 +3,7 @@
 import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,6 +33,7 @@ from flowsint_core.core.services.copilot_service import (
     PASSIVE_PARAMS,
     CopilotPlan,
     CopilotRequest,
+    candidate_review_evidence,
     eligible_catalog,
     planning_messages,
     summary_messages,
@@ -351,6 +352,41 @@ def collect_ip_intelligence(
     plan.node_versions = {str(node.id): node.version for node in nodes}
     result = run_plan(plan, db, current_user)
     return {"plan": plan, "skipped": skipped, **result}
+
+
+@router.post("/candidates")
+def review_existing_ip_evidence(
+    payload: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Review existing/imported associations without calling discovery providers."""
+    _check_sketch(db, current_user, payload.sketch_id, write=False)
+    graph, nodes, _ = _selection(payload, db, current_user)
+    if any(node.nodeType.lower() != "ip" for node in nodes):
+        raise HTTPException(422, "Select only IP entities to review related evidence")
+    rows = graph.query(
+        """MATCH (source)-[a]-(evidence)-[b]-(candidate)
+        WHERE elementId(source) IN $node_ids AND NOT elementId(candidate) IN $node_ids
+          AND source.sketch_id = $sketch_id AND evidence.sketch_id = $sketch_id
+          AND candidate.sketch_id = $sketch_id AND candidate.nodeType = 'ip'
+          AND source.deleted_at IS NULL AND evidence.deleted_at IS NULL
+          AND candidate.deleted_at IS NULL AND a.deleted_at IS NULL AND b.deleted_at IS NULL
+          AND ((evidence.nodeType = 'phrase' AND
+            ((type(a) = 'HAS_MODAT_PIVOT' AND type(b) = 'MATCHES_MODAT_PIVOT') OR
+             (type(a) = 'MATCHES_MODAT_PIVOT' AND type(b) = 'HAS_MODAT_PIVOT'))) OR
+            (evidence.nodeType = 'domain' AND type(a) IN ['PASSIVE_DNS_RESOLVED_TO', 'REVERSE_RESOLVES_TO']
+            AND type(b) IN ['PASSIVE_DNS_RESOLVED_TO', 'REVERSE_RESOLVES_TO']))
+        RETURN elementId(source) AS source_id, source.nodeLabel AS source_label,
+          elementId(candidate) AS node_id, candidate.nodeLabel AS label,
+          candidate.nodeType AS candidate_type, evidence.nodeType AS evidence_type,
+          elementId(evidence) AS evidence_id, evidence.nodeLabel AS evidence_label,
+          [type(a), type(b)] AS relationships,
+          coalesce(a.observations, []) + coalesce(b.observations, []) AS observations
+        ORDER BY node_id, source_id, evidence_id LIMIT 201""",
+        {"node_ids": payload.node_ids, "sketch_id": str(payload.sketch_id)},
+    )
+    return cast(dict[str, Any], candidate_review_evidence(rows, set(payload.node_ids)))
 
 
 @router.post("/save")

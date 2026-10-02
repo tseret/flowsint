@@ -630,6 +630,46 @@ def test_collect_requires_edit_permission(client, db_session, backend):
     backend[2].assert_not_called()
 
 
+def test_candidate_review_is_read_only_and_sketch_scoped(client, db_session, backend):
+    headers, sketch_id = _seed_user(db_session, (Role.VIEWER,))
+    backend[0].query.return_value = [
+        {
+            "source_id": "ip-1",
+            "source_label": "192.0.2.1",
+            "node_id": "peer",
+            "label": "192.0.2.2",
+            "candidate_type": "ip",
+            "evidence_type": "phrase",
+            "evidence_id": "imported",
+            "evidence_label": "Modat fingerprint",
+            "relationships": ["HAS_MODAT_PIVOT", "MATCHES_MODAT_PIVOT"],
+            "observations": [],
+        }
+    ]
+    response = client.post(
+        "/api/copilot/candidates", headers=headers, json=_request(sketch_id, ["ip-1"])
+    )
+    assert response.status_code == 200
+    assert response.json()["candidates"][0]["node_id"] == "peer"
+    assert backend[0].query.call_args.args[1] == {
+        "sketch_id": sketch_id,
+        "node_ids": ["ip-1"],
+    }
+    assert "candidate.sketch_id = $sketch_id" in backend[0].query.call_args.args[0]
+    backend[2].assert_not_called()
+
+
+@pytest.mark.parametrize("ids", [["domain-1"], ["unknown"], ["ip-1", "domain-1"]])
+def test_candidate_review_rejects_invalid_selection(client, db_session, backend, ids):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    response = client.post(
+        "/api/copilot/candidates", headers=headers, json=_request(sketch_id, ids)
+    )
+    assert response.status_code in {404, 422}
+    backend[0].query.assert_not_called()
+    backend[2].assert_not_called()
+
+
 def test_collect_without_provider_keys_queues_nothing(client, db_session, backend):
     headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
     response = client.post(
