@@ -174,3 +174,12 @@ Done:
 
 Next:
 - Configure the chosen LLM provider's key in Vault for question-specific AI planning, then review the local copilot. Team deployment remains pending approval. Graph arrangement and defensive hunts over imported telemetry remain future capabilities.
+
+## 2026-10-02 — GPT-6.1 Sol configuration
+Done:
+- Selected GPT-6.1 Sol with medium reasoning effort for the existing local review stack, following the user's cost preference. Added explicit OpenAI reasoning-effort forwarding for complete/stream requests and installed the previously missing OpenAI SDK in the core package and lockfile.
+- Exposed provider/model/effort environment settings in production Compose while retaining its existing provider default. Documented the local settings and Vault key name. Corrected the streaming protocol annotation to match the existing async-generator implementations and caller.
+- Configuration regression tests cover both request paths, omitted effort, streaming chunks, and invalid effort before client creation. All 726 Python tests passed (58/490/128/50), with four optional Neo4j tests skipped. Full lint passed with 129 inherited frontend warnings; the full changed-file Python typecheck gate passed. Frontend source is unchanged.
+
+Next:
+- Apply the combined local source build to the existing stack and verify its environment/health. A live OpenAI request requires the user's OPENAI_API_KEY in Vault; model access and response quality remain unverified. Final-review investigation automation remains follow-on work; the current reviewed-plan workflow is unchanged. Draft PR: https://github.com/tseret/flowsint/pull/1.

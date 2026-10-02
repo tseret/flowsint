@@ -26,6 +26,18 @@ your Vault key. Supported provider/model settings are `LLM_PROVIDER` and
 context and your question are sent to that provider. Vault values are never
 included in evidence, and credential-like property fields are removed.
 
+The local review setup uses GPT-6.1 Sol with medium reasoning effort:
+
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-6.1-sol
+LLM_REASONING_EFFORT=medium
+```
+
+Add `OPENAI_API_KEY` to your Vault to enable model-backed runs. The reasoning
+setting applies to OpenAI planning, summaries, and chat. It does not enable
+additional execution tools or change the reviewed-plan workflow.
+
 Without a configured model, the copilot offers type-based suggestions and factual
 run summaries, explicitly labelled **no LLM used**. These suggestions do not
 interpret the investigation question. Configured-provider failures are shown

@@ -81,6 +81,9 @@ services:
       - AUTH_SECRET=${AUTH_SECRET}
       - MASTER_VAULT_KEY_V1=${MASTER_VAULT_KEY_V1}
       - REDIS_URL=redis://redis:6379/0
+      - LLM_PROVIDER=${LLM_PROVIDER:-mistral}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -121,6 +124,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SKIP_MIGRATIONS=true
       - AUTH_SECRET=${AUTH_SECRET}
+      - LLM_PROVIDER=${LLM_PROVIDER:-mistral}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-}
     healthcheck:
       # Celery has no HTTP server — Dockerfile's curl-based healthcheck always fails.
       # Use celery's own ping primitive instead.
