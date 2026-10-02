@@ -141,8 +141,8 @@ export function CopilotCandidates({
         {busy === 'load' ? 'Loading existing evidence…' : 'Review related IP evidence'}{' '}
       </Button>
       <p className="text-sm text-muted-foreground">
-        Uses existing graph evidence and imported results only. No new provider queries. Shared
-        evidence suggests an association; review it before accepting.
+        Loading this review reads existing graph evidence. Service searches below query Modat only
+        when you click Search Modat index. Shared evidence requires review before accepting.
       </p>
       {error && (
         <p role="alert" className="text-sm text-destructive">
@@ -170,8 +170,8 @@ export function CopilotCandidates({
         <div className="space-y-3">
           <h3 className="font-medium">Recorded service fingerprint leads</h3>
           <p className="text-sm text-muted-foreground">
-            These fingerprints have not been searched by this review. Matching fingerprints can
-            reflect common software or configuration and do not establish common control.
+            Choose a recorded fingerprint below to search the provider index. Matching fingerprints
+            can reflect common software or configuration and do not establish common control.
           </p>
           {result.services.map((service) => (
             <ServiceInvestigation
