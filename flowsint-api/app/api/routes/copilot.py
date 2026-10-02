@@ -11,12 +11,13 @@ from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from flowsint_core.core.celery import celery
 from flowsint_core.core.graph import GraphNode, create_graph_service
 from flowsint_core.core.graph.serializer import GraphSerializer
-from flowsint_core.core.llm.protocol import LLMProvider
+from flowsint_core.core.llm.protocol import LLMProvider, SubscriptionError
 from flowsint_core.core.models import Key, Profile, Scan
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
@@ -47,6 +48,8 @@ router = APIRouter()
 
 
 def _model_failure(error: Exception, fallback: str) -> HTTPException:
+    if isinstance(error, SubscriptionError):
+        return HTTPException(502, str(error))
     # Return fixed messages; provider bodies can contain sensitive request data.
     if isinstance(error, APIStatusError):
         if error.code in {"credit_balance_exhausted", "insufficient_quota"}:
@@ -124,6 +127,8 @@ def _provider(db: Session, user: Profile) -> LLMProvider | None:
     except ValueError:
         # No configured model: offer transparent deterministic suggestions instead.
         return None
+    except SubscriptionError as error:
+        raise HTTPException(502, str(error)) from None
 
 
 def _reviewed_plan(
@@ -198,7 +203,9 @@ async def plan_investigation(
         },
     )
     truncated |= len(relationships) > 50 or len(recent) > 5
-    provider = _provider(db, current_user) if candidates else None
+    provider = (
+        await run_in_threadpool(_provider, db, current_user) if candidates else None
+    )
     if provider:
         try:
             response = await asyncio.wait_for(provider.complete(messages), timeout=60)
@@ -388,7 +395,7 @@ async def summarize_plan(
         for run_id in payload.run_ids
     ]
     messages, truncated = summary_messages(payload.question, evidence)
-    provider = _provider(db, current_user)
+    provider = await run_in_threadpool(_provider, db, current_user)
     if provider:
         try:
             summary = await asyncio.wait_for(provider.complete(messages), timeout=60)

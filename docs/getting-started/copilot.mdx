@@ -20,11 +20,28 @@ ThreatFox request per reviewed step, and normalization makes no target requests.
 
 ## Model configuration and evidence
 
-The copilot reuses the application's configured Mistral or OpenAI provider and
-your Vault key. Supported provider/model settings are `LLM_PROVIDER` and
-`LLM_MODEL`; key names are `MISTRAL_API_KEY` and `OPENAI_API_KEY`. Selected graph
-context and your question are sent to that provider. Vault values are never
-included in evidence, and credential-like property fields are removed.
+Open **Profile → Copilot connection** and choose **Continue with ChatGPT** to
+connect an eligible ChatGPT subscription. Complete sign-in and consent, then
+return to Profile. The model picker lists models available to the connected
+account. The default is GPT-6.1 Sol with **medium** reasoning effort; if your
+account does not offer that model, choose an available model explicitly.
+
+Subscription usage counts against your ChatGPT allowance. A disconnected account,
+unavailable model, or exhausted allowance produces an actionable error; Flowsint
+does not automatically switch to paid API billing. Saved accounts can be selected
+and reconnected from Profile, or disconnected there. Tokens are encrypted in the
+existing Vault storage and never exposed through its key list.
+
+This connection currently supports the local instance at `http://localhost:5173`.
+Shared remote team hosting needs the separate supported remote sign-in flow.
+Existing Codex sign-in credentials are not imported or reused.
+
+For API billing, explicitly select **API key — separate billing** in Profile.
+Flowsint then uses the configured Mistral or OpenAI provider and your Vault key.
+Supported settings are `LLM_PROVIDER` and `LLM_MODEL`; key names are
+`MISTRAL_API_KEY` and `OPENAI_API_KEY`. Selected graph context and your question
+are sent to the selected provider. Vault values are never included in evidence,
+and credential-like property fields are removed.
 
 The local review setup uses GPT-6.1 Sol with medium reasoning effort:
 
@@ -34,11 +51,11 @@ LLM_MODEL=gpt-6.1-sol
 LLM_REASONING_EFFORT=medium
 ```
 
-Add `OPENAI_API_KEY` to your Vault to enable model-backed runs. The reasoning
-setting applies to OpenAI planning, summaries, and chat. It does not enable
-additional execution tools or change the reviewed-plan workflow.
+In API mode, add `OPENAI_API_KEY` to your Vault to enable model-backed runs. The
+reasoning setting applies to OpenAI planning, summaries, and chat. It does not
+enable additional execution tools or change the reviewed-plan workflow.
 
-Without a configured model, the copilot offers type-based suggestions and factual
+In API mode without a configured model, the copilot offers type-based suggestions and factual
 run summaries, explicitly labelled **no LLM used**. These suggestions do not
 interpret the investigation question. Configured-provider failures are shown
 as errors, so they do not look like successful model responses.

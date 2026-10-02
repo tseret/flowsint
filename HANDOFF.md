@@ -197,3 +197,13 @@ Done:
 
 Next:
 - Replenish the OpenAI project's API credits or use a funded project key before successful model planning can be verified. Browser verification of the new text remains unavailable in this session. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-02 — ChatGPT subscription connection
+Done:
+- Added local Continue with ChatGPT sign-in using documented public OAuth and Responses endpoints, with encrypted per-user sessions in the existing Vault. State/nonce/PKCE, one-use callbacks, verified identities, serialized rotating refresh, saved accounts, model discovery, and disconnect/revocation are covered by regressions. Callback secrets are excluded from API and nginx access logs; reserved records cannot be read, overwritten, or deleted through the public key routes.
+- Profile now offers explicit subscription or separately paid API billing. Copilot planning, summaries, and chat share the connection; default model is GPT-6.1 Sol with medium reasoning. Unavailable models, disconnected sessions, and subscription limits never trigger API billing or a different model automatically. Failed partial chat streams are not saved as completed answers.
+- All 774 Python tests and 39 frontend tests passed, with four optional live Neo4j skips. Full lint passed with 129 inherited frontend warnings; targeted mypy passed for all new/changed Python files. Full frontend typecheck still reports 84 inherited errors and none in the connection/copilot changes.
+- Browser automation remains unavailable because its native pipe cannot start. Root will verify the existing live services after sequential image builds; no extra application/database services or test investigations are created.
+
+Next:
+- Complete personal ChatGPT sign-in and consent in Profile to verify account eligibility, the live model catalog, and successful inference. This local loopback flow is not the remote team sign-in flow; team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.

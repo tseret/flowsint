@@ -14,6 +14,7 @@ import {
   type CopilotSummary
 } from '@/api/copilot-service'
 import { sketchService } from '@/api/sketch-service'
+import { chatGPTSubscriptionService } from '@/api/chatgpt-subscription-service'
 import { collaborationService } from '@/api/collaboration-service'
 import { queryKeys } from '@/api/query-keys'
 import { useGraphStore } from '@/stores/graph-store'
@@ -37,6 +38,11 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const refetchGraph = useGraphControls((s) => s.refetchGraph)
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
+  const connection = useQuery({
+    queryKey: ['chatgpt-subscription', 'status'],
+    queryFn: chatGPTSubscriptionService.status,
+    enabled: open
+  })
   const [question, setQuestion] = useState('')
   const [plan, setPlan] = useState<CopilotPlan | null>(null)
   const [runs, setRuns] = useState<CopilotRun[]>([])
@@ -225,6 +231,21 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
             {error && (
               <p role="alert" className="text-sm text-destructive">
                 {error}
+              </p>
+            )}
+            <p className="text-sm text-muted-foreground">
+              {connection.data?.mode === 'subscription'
+                ? `ChatGPT subscription · ${connection.data.model} · ${connection.data.reasoning_effort} effort${connection.data.connected ? '' : ' · connection required'}`
+                : connection.data
+                  ? 'API key · separate API billing'
+                  : 'Loading connection…'}{' '}
+              <Link to="/dashboard/profile" className="underline">
+                Manage connection
+              </Link>
+            </p>
+            {connection.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {connection.error.message}
               </p>
             )}
             {plan && (
