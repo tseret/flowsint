@@ -158,6 +158,7 @@ Done:
 - Plans allow at most ten selected entities and three independent steps: root-domain normalization and exact domain/IP ThreatFox lookups. API checks current permissions, compatible IDs/types, provider prerequisites and entity versions; model text cannot supply commands, URLs, Cypher or new target scope. Structured context is bounded and credential fields removed.
 - All steps serialize before queueing; partial broker failures retain the IDs already queued. UI tolerates scan rows appearing after tasks are consumed, preserves reviewed entity labels and offers bounded polling/recovery. Saving recipes after enrichment does not depend on stale node versions and stores no original entity IDs.
 - Graph toolbar controls expose their text labels to assistive tools, including the selected-entity copilot action.
+- Live verification completed local normalization and saved its flow recipe. Draft-finding saving exposed a pre-existing sketch metadata serialization failure; GET now uses the existing ORM response schema, with nullable descriptions matching stored data. The new regression fails before the fix and passes after it; 24 focused API checks passed.
 - Source checks: 721 Python tests passed (58 types, 487 core, 128 enrichers, 48 API); four optional live Neo4j tests skipped. Frontend: 31 tests and production build passed. Full lint passed with 129 inherited frontend warnings; changed Python mypy passed. Frontend typecheck retains 84 inherited diagnostics with none in changed files.
 
 Next:
