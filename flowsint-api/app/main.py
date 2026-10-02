@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import FastAPI
@@ -8,6 +9,7 @@ from app.api.routes import (
     analysis,
     auth,
     chat,
+    chatgpt_subscription,
     copilot,
     custom_types,
     diagnostics,
@@ -42,6 +44,25 @@ app.add_middleware(
 )
 
 
+class OAuthCallbackLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) == 5:
+            path = record.args[2]
+            if (
+                isinstance(path, str)
+                and path.split("?", 1)[0] == "/api/chatgpt-subscription/callback"
+            ):
+                record.args = (
+                    *record.args[:2],
+                    path.split("?", 1)[0],
+                    *record.args[3:],
+                )
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(OAuthCallbackLogFilter())
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Health check endpoint for Docker healthcheck"""
@@ -58,6 +79,11 @@ app.include_router(flows.router, prefix="/api/flows", tags=["flows"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(analysis.router, prefix="/api/analyses", tags=["analyses"])
 app.include_router(chat.router, prefix="/api/chats", tags=["chats"])
+app.include_router(
+    chatgpt_subscription.router,
+    prefix="/api/chatgpt-subscription",
+    tags=["chatgpt-subscription"],
+)
 app.include_router(copilot.router, prefix="/api/copilot", tags=["copilot"])
 app.include_router(scan.router, prefix="/api/scans", tags=["scans"])
 app.include_router(keys.router, prefix="/api/keys", tags=["keys"])

@@ -1,14 +1,16 @@
-from typing import List, Optional
+from typing import List, Optional, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.api.schemas.chat import ChatCreate, ChatRead
-from flowsint_core.core.models import Profile
+from flowsint_core.core.llm.protocol import SubscriptionError
+from flowsint_core.core.models import Chat, Profile
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
     NotFoundError,
@@ -26,9 +28,9 @@ class ChatRequest(BaseModel):
 @router.get("", response_model=List[ChatRead])
 def get_chats(
     db: Session = Depends(get_db), current_user: Profile = Depends(get_current_user)
-):
+) -> List[Chat]:
     service = create_chat_service(db)
-    return service.get_chats_for_user(current_user.id)
+    return cast(List[Chat], service.get_chats_for_user(current_user.id))
 
 
 @router.get("/investigation/{investigation_id}", response_model=List[ChatRead])
@@ -36,9 +38,11 @@ def get_chats_by_investigation(
     investigation_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> List[Chat]:
     service = create_chat_service(db)
-    return service.get_by_investigation(investigation_id, current_user.id)
+    return cast(
+        List[Chat], service.get_by_investigation(investigation_id, current_user.id)
+    )
 
 
 @router.post("/stream/{chat_id}")
@@ -47,7 +51,7 @@ async def stream_chat(
     payload: ChatRequest,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> StreamingResponse:
     service = create_chat_service(db)
 
     try:
@@ -61,8 +65,8 @@ async def stream_chat(
     llm_messages = service.build_llm_messages(ai_context)
 
     try:
-        provider = service.get_llm_provider(current_user.id)
-    except ValueError as e:
+        provider = await run_in_threadpool(service.get_llm_provider, current_user.id)
+    except (ValueError, SubscriptionError) as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     return StreamingResponse(
@@ -77,7 +81,7 @@ def create_chat(
     payload: ChatCreate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Chat:
     service = create_chat_service(db)
     return service.create(
         title=payload.title,
@@ -92,7 +96,7 @@ def get_chat_by_id(
     chat_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Chat:
     service = create_chat_service(db)
     try:
         return service.get_by_id(chat_id, current_user.id)
@@ -105,7 +109,7 @@ def delete_chat(
     chat_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> None:
     service = create_chat_service(db)
     try:
         service.delete(chat_id, current_user.id)
