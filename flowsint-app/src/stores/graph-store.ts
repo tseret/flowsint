@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { GraphNode, GraphEdge, NodeProperties, ChatContextFormat, Path } from '@/types'
+import type { GraphNode, GraphEdge, ChatContextFormat, Path } from '@/types'
 import { type ActionItem } from '@/lib/action-items'
 import { Filters, TypeFilter } from '@/types/filter'
 import { edgeMatchesEvidence } from '@/lib/graph-presentation'
@@ -31,7 +31,7 @@ interface GraphState {
   updateGraphData: (nodes: GraphNode[], edges: GraphEdge[]) => void
   updateNode: (nodeId: string, updates: Partial<GraphNode>) => void
   updateEdge: (edgeId: string, updates: Partial<GraphEdge>) => void
-  replaceNode: (oldId: string, newId: string, newProperties: NodeProperties) => void
+  replaceNode: (oldId: string, savedNode: GraphNode) => void
   reset: () => void
 
   // === Selection & Current ===
@@ -333,11 +333,12 @@ export const useGraphStore = create<GraphState>()(
         })
       },
 
-      replaceNode: (oldId, newId, nodeProperties) => {
+      replaceNode: (oldId, savedNode) => {
+        const { id: newId, nodeProperties, version } = savedNode
         const { nodes, edges, filters, nodesMapping, setCurrentNodeId } = get()
         // Update the node's ID and data.id
         const updatedNodes = nodes.map((node) =>
-          node.id === oldId ? { ...node, id: newId, nodeProperties: nodeProperties } : node
+          node.id === oldId ? { ...node, id: newId, nodeProperties, version } : node
         )
         // Update all edges that reference this node
         const updatedEdges = edges.map((edge) => {
