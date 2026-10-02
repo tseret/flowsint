@@ -214,6 +214,9 @@ def planning_messages(
             "passive DNS and threat reports rather than choosing only ThreatFox. "
             "These are existing provider records, not current scans. Newly discovered "
             "entities are findings for human review, not new execution inputs. "
+            "Recorded service fingerprints are unqueried leads unless cited search results "
+            "exist; do not imply related-IP coverage from port collection alone. "
+            "A shared fingerprint does not establish common control. "
             "Missing credentials are prerequisites, not permission to bypass them. "
             "Distinguish evidence from hypotheses and acknowledge incomplete context. "
             'Return ONLY JSON: {"analysis":"...","steps":[{"enricher":"...",'
@@ -337,3 +340,41 @@ def candidate_review_evidence(
             continue
         candidate["evidence"].append(path)
     return {"candidates": list(candidates.values()), "truncated": truncated}
+
+
+def service_fingerprint_evidence(
+    rows: list[dict[str, Any]], selected_ids: set[str]
+) -> dict[str, Any]:
+    """Expose recorded service fingerprints, never infer peers or run searches."""
+    services = []
+    truncated = len(rows) > 50
+    for row in rows[:50]:
+        data = row.get("data")
+        if row.get("source_id") not in selected_ids or not isinstance(data, dict):
+            continue
+        fingerprints = {
+            key.removeprefix("nodeProperties.fingerprints."): value
+            for key, value in data.items()
+            if key.startswith("nodeProperties.fingerprints.")
+            and isinstance(value, (str, int))
+            and not isinstance(value, bool)
+        }
+        if not fingerprints:
+            continue
+        safe, clipped = _safe_context(fingerprints)
+        truncated |= clipped
+        services.append(
+            {
+                "source_id": row["source_id"],
+                "source_label": str(row.get("source_label", ""))[:200],
+                "service_id": str(row.get("service_id", ""))[:200],
+                "port": data.get("nodeProperties.number"),
+                "transport": str(data.get("nodeProperties.protocol") or "")[:20],
+                "service": str(data.get("nodeProperties.service") or "")[:100],
+                "provider": str(data.get("nodeProperties.provider") or "")[:100],
+                "observed_at": str(data.get("nodeProperties.observed_at") or "")[:100],
+                "source_ref": str(data.get("nodeProperties.source_ref") or "")[:1000],
+                "fingerprints": safe,
+            }
+        )
+    return {"services": services, "services_truncated": truncated}

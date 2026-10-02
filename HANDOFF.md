@@ -229,3 +229,12 @@ Done:
 
 Next:
 - Review existing/imported evidence with the new panel. The ip_to_ips_modat discovery connector is not added to autonomous execution. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-02 — recorded Modat service fingerprint visibility
+Done:
+- Traced the reported HASSH blind spot: the local Modat port connector discarded fingerprints, planning context omitted neighbor port properties, and graph-only review could not show unqueried service leads. The separate local related-IP connector also requires three fingerprint families before a service is eligible; it remains outside autonomous copilot execution.
+- Retained returned Modat SSH/banner/HTTP/TLS fingerprints and available observation provenance; surfaced recorded service leads independently of existing peer paths and included bounded port properties in planning evidence. Provider failures are collection gaps, not successful empty results. Shared fingerprints do not establish common control.
+- Regression checks and sequential local image verification are in progress. No live discovery/provider requests or follow-up target queries were used for verification.
+
+Next:
+- Complete final checks, apply matching images to the existing stack and update the draft PR. Legacy Modat port records need an explicitly chosen passive refresh to recover discarded metadata. Autonomous external infrastructure expansion is not implemented; team deployment remains pending approval.

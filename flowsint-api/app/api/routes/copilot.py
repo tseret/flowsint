@@ -36,6 +36,7 @@ from flowsint_core.core.services.copilot_service import (
     candidate_review_evidence,
     eligible_catalog,
     planning_messages,
+    service_fingerprint_evidence,
     summary_messages,
     validate_plan,
 )
@@ -179,7 +180,8 @@ async def plan_investigation(
           AND other.deleted_at IS NULL AND r.deleted_at IS NULL
         RETURN elementId(r) AS id, type(r) AS relationship,
           elementId(startNode(r)) AS source, elementId(endNode(r)) AS target,
-          other.nodeLabel AS neighbor_label, r.observations AS observations
+          other.nodeLabel AS neighbor_label, r.observations AS observations,
+          CASE WHEN other.nodeType = 'port' THEN properties(other) ELSE {} END AS neighbor_properties
         ORDER BY id LIMIT 51""",
         {"node_ids": payload.node_ids, "sketch_id": str(payload.sketch_id)},
     )
@@ -386,7 +388,21 @@ def review_existing_ip_evidence(
         ORDER BY node_id, source_id, evidence_id LIMIT 201""",
         {"node_ids": payload.node_ids, "sketch_id": str(payload.sketch_id)},
     )
-    return cast(dict[str, Any], candidate_review_evidence(rows, set(payload.node_ids)))
+    result = cast(
+        dict[str, Any], candidate_review_evidence(rows, set(payload.node_ids))
+    )
+    services = graph.query(
+        """MATCH (source)-[r:HAS_PORT]-(port)
+        WHERE elementId(source) IN $node_ids AND source.sketch_id = $sketch_id
+          AND port.sketch_id = $sketch_id AND port.nodeType = 'port'
+          AND source.deleted_at IS NULL AND port.deleted_at IS NULL AND r.deleted_at IS NULL
+        RETURN elementId(source) AS source_id, source.nodeLabel AS source_label,
+          elementId(port) AS service_id, properties(port) AS data
+        ORDER BY source_id, service_id LIMIT 51""",
+        {"node_ids": payload.node_ids, "sketch_id": str(payload.sketch_id)},
+    )
+    result.update(service_fingerprint_evidence(services, set(payload.node_ids)))
+    return result
 
 
 @router.post("/save")

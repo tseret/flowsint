@@ -1,5 +1,9 @@
 import { useState } from 'react'
-import { copilotService, type CopilotCandidate } from '@/api/copilot-service'
+import {
+  copilotService,
+  type CopilotCandidate,
+  type CopilotServiceEvidence
+} from '@/api/copilot-service'
 import { collaborationService, type CaseItem } from '@/api/collaboration-service'
 import { sketchService } from '@/api/sketch-service'
 import { Button } from '@/components/ui/button'
@@ -47,6 +51,8 @@ export function CopilotCandidates({
   const [result, setResult] = useState<{
     candidates: CopilotCandidate[]
     truncated: boolean
+    services: CopilotServiceEvidence[]
+    services_truncated: boolean
   } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -149,7 +155,50 @@ export function CopilotCandidates({
         </p>
       )}
       {result && result.candidates.length === 0 && (
-        <p className="text-sm">No related IP evidence found in the current graph.</p>
+        <p className="text-sm">
+          No existing related-IP paths found. This does not rule out unqueried fingerprint leads.
+        </p>
+      )}
+      {result && result.services.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          No stored service fingerprints were found. Older Modat port records omitted them;
+          refreshing the selected IP’s passive service enrichment can retain them now.
+        </p>
+      )}
+      {result && result.services.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="font-medium">Recorded service fingerprint leads</h3>
+          <p className="text-sm text-muted-foreground">
+            These fingerprints have not been searched by this review. Matching fingerprints can
+            reflect common software or configuration and do not establish common control.
+          </p>
+          {result.services.map((service) => (
+            <article
+              key={`${service.source_id}-${service.service_id}`}
+              className="rounded border p-3 text-sm space-y-2"
+            >
+              <p className="font-medium">
+                {service.source_label} · {service.port}/{service.transport} · {service.service}
+              </p>
+              <p>
+                Provider: {service.provider || 'Not recorded'} · Observed:{' '}
+                {service.observed_at || 'Not recorded'}
+              </p>
+              <p className="break-all">Source: {service.source_ref || 'Not recorded'}</p>
+              <p className="text-muted-foreground break-all">
+                Service entity: {service.service_id}
+              </p>
+              <pre className="whitespace-pre-wrap break-all text-xs">
+                {JSON.stringify(service.fingerprints, null, 2)}
+              </pre>
+            </article>
+          ))}
+        </div>
+      )}
+      {result?.services_truncated && (
+        <p className="text-sm text-amber-600">
+          Service evidence was truncated; other fingerprint leads may exist.
+        </p>
       )}
       {result?.candidates.map((candidate) => (
         <article key={candidate.node_id} className="rounded border p-3 text-sm space-y-3">

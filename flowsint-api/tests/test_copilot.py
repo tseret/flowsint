@@ -215,6 +215,7 @@ def test_valid_model_plan_uses_provider_interface_and_server_prerequisites(
     assert [message.role.value for message in messages] == ["system", "user"]
     context = json.loads(messages[1].content)
     assert context["question"] == _request(sketch_id)["question"]
+    assert "properties(other)" in backend[0].query.call_args.args[0]
     backend[2].assert_not_called()
 
 
@@ -655,7 +656,10 @@ def test_candidate_review_is_read_only_and_sketch_scoped(client, db_session, bac
         "sketch_id": sketch_id,
         "node_ids": ["ip-1"],
     }
-    assert "candidate.sketch_id = $sketch_id" in backend[0].query.call_args.args[0]
+    assert (
+        "candidate.sketch_id = $sketch_id" in backend[0].query.call_args_list[0].args[0]
+    )
+    assert "port.sketch_id = $sketch_id" in backend[0].query.call_args.args[0]
     backend[2].assert_not_called()
 
 
@@ -738,3 +742,34 @@ def test_summary_includes_only_relationship_observations_from_selected_runs(
         "sketch_id": sketch_id,
         "run_ids": [str(run.id)],
     }
+
+
+def test_candidate_review_exposes_service_hashes_without_external_queries(
+    client, db_session, backend, monkeypatch
+):
+    headers, sketch_id = _seed_user(db_session, (Role.VIEWER,))
+    backend[0].query.side_effect = [
+        [],
+        [
+            {
+                "source_id": "ip-1",
+                "source_label": "192.0.2.1",
+                "service_id": "service-22",
+                "data": {
+                    "nodeProperties.number": 22,
+                    "nodeProperties.service": "ssh",
+                    "nodeProperties.fingerprints.ssh.hassh": "ab" * 16,
+                },
+            }
+        ],
+    ]
+    provider = MagicMock()
+    monkeypatch.setattr(route, "_provider", provider)
+    response = client.post(
+        "/api/copilot/candidates", headers=headers, json=_request(sketch_id, ["ip-1"])
+    )
+    assert response.status_code == 200
+    assert response.json()["candidates"] == []
+    assert response.json()["services"][0]["fingerprints"] == {"ssh.hassh": "ab" * 16}
+    provider.assert_not_called()
+    backend[2].assert_not_called()
