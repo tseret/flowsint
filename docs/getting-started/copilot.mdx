@@ -34,6 +34,23 @@ that count. Normalization makes no external requests. Saved copilot DNS recipes
 retain the two-page limit. Provider quota failures and partial coverage remain
 visible in run evidence.
 
+## Review related IP evidence
+
+With IPs selected, choose **Review related IP evidence** in the copilot. It reads
+existing or imported Modat pivot paths and shared historical DNS paths in the
+current sketch. Each candidate includes its source IP, supporting graph path and
+recorded observations. Shared hosting or ports alone do not establish an association.
+
+Record an association as pending, accepted or rejected. Decisions are saved as
+ordinary case findings and restored when the same evidence is reviewed again.
+Changed evidence requires a new review; concurrent edits require reloading the
+current decision. Readers can inspect evidence; editors can record decisions.
+
+This stage does not invoke `ip_to_ips_modat`, query candidate IPs or use the LLM.
+It shows at most 20 candidates and five supporting paths per candidate, and flags
+truncated evidence. An empty result means no supported path was found in the
+bounded existing graph, not that no related infrastructure exists.
+
 ## Model configuration and evidence
 
 Open **Profile → Copilot connection** and choose **Continue with ChatGPT** to
