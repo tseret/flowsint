@@ -451,6 +451,7 @@ def _service_context(
     rows = graph.query(
         """MATCH (source)-[r:HAS_PORT]-(port)
         WHERE elementId(port) = $service_id AND port.sketch_id = $sketch_id
+          AND port.nodeType = 'port'
           AND source.sketch_id = $sketch_id AND source.nodeType = 'ip'
           AND source.deleted_at IS NULL AND port.deleted_at IS NULL AND r.deleted_at IS NULL
         RETURN DISTINCT elementId(source) AS source_id, source.nodeLabel AS source_label,

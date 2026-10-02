@@ -309,7 +309,8 @@ def lookup_recorded_fingerprint(
             continue
         expected = service["fingerprints"][field]
         if (
-            observed.get("port") != service["port"]
+            type(observed.get("port")) is not int
+            or observed.get("port") != service["port"]
             or observed.get("transport") != str(service["transport"]).lower()
             or observed.get("protocol") != str(service["service"]).lower()
             or _fingerprint(observed, field).lower()
