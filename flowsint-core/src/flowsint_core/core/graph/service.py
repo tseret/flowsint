@@ -93,6 +93,10 @@ class GraphService:
                 "create_node method takes a GraphNode as input. If you want to insert a node from a FlowsintType, please use create_node_from_flowsint_type method."
             )
 
+        if isinstance(node_obj.nodeProperties, dict):
+            node_obj.nodeProperties = GraphSerializer.parse_flowsint_type(
+                node_obj.nodeProperties, node_obj.nodeType, self._type_resolver
+            )
         neo4j_node_dict: GraphDict = GraphSerializer.graph_node_to_neo4j_dict(node_obj)
 
         if self._enable_batching:

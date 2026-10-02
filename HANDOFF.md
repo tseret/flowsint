@@ -137,3 +137,13 @@ Next:
 - Review the draft PR and explicitly authorize deployment before migrating/replacing the running stack. Verify the new UI journeys after deployment.
 - Retry `make build-local` when Docker responds normally; do not start extra services for verification.
 - Perform the documented backup/restore rehearsal against separate volumes when additional database services are authorized. Live provider mapping/quota checks remain dependent on provider access; no fresh provider calls were made for this change.
+
+## 2026-10-02 — apply changes to the existing local review stack
+Done:
+- User clarified the workflow: update the existing localhost:5173 stack while iterating, then deploy for the team once the local result is approved. Updated local AGENTS.md accordingly.
+- Preserved the existing hash-hunt/Modat/parameter-dialog changes in local/investigation-workspace under .local/workspace-review. Backed up PostgreSQL and stopped-Neo4j data with verified archive listings and checksums, preserving authentication and vault settings. Updated only existing application services; no extra database services were started.
+- Live diagnostics confirmed matching frontend/API/worker revisions, 72 matching connectors, healthy dependencies and current migrations. Graph infrastructure controls and a personal named view survived reload. A separate Workspace verification case confirmed persistent evidence, assignment, status, reviewer decisions and actor history.
+- Browser verification reproduced an immediate-edit conflict on newly inserted nodes: the response returned version 0 while Neo4j stored version 1. Fixed add_node to return the stored node/version, and normalized browser-added properties through the type resolver so their canonical identities match enriched entities. Added regression coverage for both behaviors.
+
+Next:
+- Apply the verified immediate-edit fix to the local integration images and repeat the browser reproduction. Team deployment remains pending local review.
