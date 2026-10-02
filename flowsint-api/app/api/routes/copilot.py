@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -43,6 +44,36 @@ from flowsint_enrichers import ENRICHER_REGISTRY
 from flowsint_types import Domain, Ip
 
 router = APIRouter()
+
+
+def _model_failure(error: Exception, fallback: str) -> HTTPException:
+    # Return fixed messages; provider bodies can contain sensitive request data.
+    if isinstance(error, APIStatusError):
+        if error.code in {"credit_balance_exhausted", "insufficient_quota"}:
+            return HTTPException(
+                502,
+                "The OpenAI project has exhausted its API credits or quota. "
+                "Check that project's billing and limits, or update OPENAI_API_KEY "
+                "in Vault with a key from a funded project.",
+            )
+        if error.status_code == 401:
+            return HTTPException(
+                502, "OpenAI rejected the API key. Update OPENAI_API_KEY in Vault."
+            )
+        if error.status_code in {403, 404}:
+            return HTTPException(
+                502,
+                "The configured OpenAI model is unavailable to this project. Check model access and API key permissions.",
+            )
+        if error.status_code == 429:
+            return HTTPException(
+                503, "OpenAI is rate limiting requests. Wait before trying again."
+            )
+    if isinstance(error, (TimeoutError, APIConnectionError)):
+        return HTTPException(
+            504, "The model connection failed or timed out. Try again later."
+        )
+    return HTTPException(502, fallback)
 
 
 class SavePlan(CopilotPlan):
@@ -179,8 +210,10 @@ async def plan_investigation(
             plan = validate_plan(proposed, payload, candidates, truncated)
         except (ValueError, TypeError):
             raise HTTPException(502, "The model returned an invalid plan. Try again.")
-        except Exception:
-            raise HTTPException(502, "The model could not generate a plan. Try again.")
+        except Exception as error:
+            raise _model_failure(
+                error, "The model could not generate a plan. Try again."
+            ) from None
     else:
         plan = validate_plan(
             {
@@ -367,11 +400,11 @@ async def summarize_plan(
                 str(run_id) for run_id in payload.run_ids
             }:
                 raise ValueError("Invalid evidence citations")
-        except Exception:
-            raise HTTPException(
-                502,
+        except Exception as error:
+            raise _model_failure(
+                error,
                 "The model could not produce a valid evidence-linked summary. Try again.",
-            )
+            ) from None
     else:
         lines = ["Recorded enrichment outcomes (no LLM used):"]
         for run in runs:

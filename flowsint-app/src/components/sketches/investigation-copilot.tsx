@@ -224,7 +224,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
             )}
             {error && (
               <p role="alert" className="text-sm text-destructive">
-                {error} Review the issue and suggest a new plan if entities have changed.
+                {error}
               </p>
             )}
             {plan && (

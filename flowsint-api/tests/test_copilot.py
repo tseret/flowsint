@@ -4,7 +4,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
+from openai import APIStatusError
 
 from app.api.routes import copilot as route
 from app.api.routes.flows import compute_flow_branches
@@ -417,6 +419,58 @@ def _run(db_session, sketch_id, status="COMPLETED", outcome="no_match"):
     db_session.add(run)
     db_session.commit()
     return run
+
+
+@pytest.mark.parametrize("endpoint", ["plan", "summary"])
+@pytest.mark.parametrize("code", ["credit_balance_exhausted", "insufficient_quota"])
+def test_openai_credit_error_is_actionable_and_redacted(
+    client, db_session, backend, monkeypatch, endpoint, code
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    error = APIStatusError(
+        "sensitive-provider-body",
+        response=httpx.Response(
+            429,
+            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+        ),
+        body={"code": code, "message": "sensitive-provider-body"},
+    )
+    provider = MagicMock()
+    provider.complete = AsyncMock(side_effect=error)
+    monkeypatch.setattr(route, "_provider", lambda db, user: provider)
+    body = _request(sketch_id)
+    if endpoint == "summary":
+        body.pop("node_ids")
+        body["run_ids"] = [str(_run(db_session, sketch_id).id)]
+    response = client.post(f"/api/copilot/{endpoint}", headers=headers, json=body)
+    assert response.status_code == 502
+    assert "API credits or quota" in response.json()["detail"]
+    assert "OPENAI_API_KEY" in response.json()["detail"]
+    assert "sensitive-provider-body" not in response.text
+    backend[2].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status, expected_status, message",
+    [
+        (401, 502, "rejected the API key"),
+        (403, 502, "unavailable"),
+        (404, 502, "unavailable"),
+        (429, 503, "rate limiting"),
+    ],
+)
+def test_openai_status_errors_use_fixed_messages(status, expected_status, message):
+    error = APIStatusError(
+        "sensitive-provider-body",
+        response=httpx.Response(
+            status, request=httpx.Request("POST", "https://api.openai.com")
+        ),
+        body={"code": "other_error"},
+    )
+    result = route._model_failure(error, "Fallback")
+    assert result.status_code == expected_status
+    assert message in result.detail
+    assert "sensitive-provider-body" not in result.detail
 
 
 def test_summary_cannot_read_another_sketch_run(client, db_session, backend):

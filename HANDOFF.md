@@ -185,3 +185,13 @@ Done:
 
 Next:
 - Add OPENAI_API_KEY in Vault for model-backed runs; live model access and response quality remain unverified. Final-review investigation automation remains follow-on work; the current reviewed-plan workflow is unchanged. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-02 — actionable copilot provider errors
+Done:
+- Reproduced the reported planning failure with the configured Vault provider inside the existing API: OpenAI HTTP 429, credit_balance_exhausted. No key, provider response body, or entity context was printed. This is a project billing/quota failure, unrelated to changed graph entities.
+- Planning and summaries now return fixed, actionable messages for OpenAI credit/quota, authentication, model access, rate-limit, and connection failures. Removed the UI's unconditional entity-change advice. Provider response bodies remain private; no automatic model substitution was added.
+- Eight regression cases cover both endpoints' quota errors and redaction plus authentication/access/rate-limit messages. All 734 Python tests and 31 frontend tests passed; full lint passed with 129 inherited frontend warnings; the changed-file Python typecheck gate passed.
+- Removed the three requested test investigations, the smoke-test sketch within Hexanet, and the generated copilot flow through the existing UI. Hexanet's Infra + seeds graph and the preexisting example flow were preserved.
+
+Next:
+- Apply matching images to the existing local stack and verify the new error. Browser automation currently cannot initialize its native pipe; use the closest runtime regression if it remains unavailable. The user must replenish the OpenAI project's API credits or use a funded project key before successful model planning can be verified. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
