@@ -296,8 +296,12 @@ def lookup_recorded_fingerprint(
             truncated = True
             continue
         observed = record["service"]
+        raw_address = record.get("ip")
+        if not isinstance(raw_address, str):
+            truncated = True
+            continue
         try:
-            address = str(ip_address(record.get("ip")))
+            address = str(ip_address(raw_address))
         except (ValueError, TypeError):
             truncated = True
             continue
