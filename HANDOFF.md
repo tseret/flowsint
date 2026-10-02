@@ -163,3 +163,14 @@ Done:
 
 Next:
 - Apply the combined source to the existing local API/worker/frontend images, verify the selected-entity journey in the browser, then update the existing draft PR. Team deployment remains pending approval.
+
+## 2026-10-02 — live copilot verification
+Done:
+- Applied matching local images v1.2.12-67-g2822b10ba7b7 to the existing API, worker and frontend; no extra services or schema changes. Preserved the existing local connector work in .local/workspace-review. Browser diagnostics report matching builds, 72 matching connectors, healthy dependencies and current migrations.
+- Selected copilot-review.example.org in the Workspace verification case, generated a plan, removed ThreatFox and ran local normalization with zero external lookup calls. Run b22969f5-a43b-452c-a5c7-6dbf637d53ae completed with one output, added example.org and its relationship, and produced a cited factual summary.
+- Saved the completed plan as an ordinary flow (13ec48fd-8536-4ae6-97a9-d03000988b0c) after enrichment updated entity versions; it renders in the normal editor. Repeated the failed draft-finding save after the metadata fix: it succeeds and persists in the case with supporting run references, open status and pending review. Actor activity is recorded.
+- Final source checks: 723 Python tests (58/487/128/50); combined local source: 755 (58/488/159/50), with four optional live Neo4j tests skipped. Frontend: 31 tests and final image production build passed. Full lint passed with 129 inherited warnings; the full changed-file Python mypy gate passed. Frontend typecheck retains 84 inherited diagnostics with none in changed files.
+- The current account has no configured LLM key: live planning/summaries used the labelled deterministic fallback. Model planning and grounded summary success/failure paths were verified with mocked providers. No fresh intelligence-provider requests were made. Implementation and user guide are included in the existing PR https://github.com/tseret/flowsint/pull/1.
+
+Next:
+- Configure the chosen LLM provider's key in Vault for question-specific AI planning, then review the local copilot. Team deployment remains pending approval. Graph arrangement and defensive hunts over imported telemetry remain future capabilities.
