@@ -158,3 +158,26 @@ Done:
 
 Next:
 - Continue local review on localhost:5173. Team deployment requires the user's approval of the local result; full recovery rehearsal and fresh provider-response checks remain unverified.
+## 2026-10-02 — apply changes to the existing local review stack
+Done:
+- User clarified the workflow: update the existing localhost:5173 stack while iterating, then deploy for the team once the local result is approved. Updated local AGENTS.md accordingly.
+- Preserved the existing hash-hunt/Modat/parameter-dialog changes in local/investigation-workspace under .local/workspace-review. Backed up PostgreSQL and stopped-Neo4j data with verified archive listings and checksums, preserving authentication and vault settings. Updated only existing application services; no extra database services were started.
+- Live diagnostics confirmed matching frontend/API/worker revisions, 72 matching connectors, healthy dependencies and current migrations. Graph infrastructure controls and a personal named view survived reload. A separate Workspace verification case confirmed persistent evidence, assignment, status, reviewer decisions and actor history.
+- Browser verification reproduced an immediate-edit conflict on newly inserted nodes: the response returned version 0 while Neo4j stored version 1. Fixed add_node to return the stored node/version, and normalized browser-added properties through the type resolver so their canonical identities match enriched entities. Added regression coverage for both behaviors.
+- Repeating that journey exposed missing element IDs in single-node reads and a dropped persisted version during optimistic frontend replacement. Fixed the repository result and all three creation callers through the shared replacement helper. Regression checks cover IDs, versions, graph position and edge endpoint preservation. Combined local suite: 708 Python tests; frontend 24 tests and production build passed. Lint passed; full frontend typecheck remains at 84 inherited errors with no new diagnostic signatures.
+- Final matching local images v1.2.12-57-g7d8611cfb274 built and were applied using the git-excluded docker-compose.local.yml. Normal local Compose commands now retain these images instead of the previous per-file overlays. Original overrides and data are backed up under backups/workspace-20261002T050710Z. No additional app/database services were created.
+- Repeated the failed journey on the final build: a fresh entity's first property edit returned 200, advanced its persisted version to 2 and survived reload. A second tab's stale edit returned 409 while retaining its draft; Load latest recovered the saved version. Analysis title/body autosaves survived reload. Final UI diagnostics: all builds match, 72 connectors match, migrations current and all dependencies healthy.
+- Feature branch checks: 676 Python tests; combined local integration: 708 Python tests (four optional live tests skipped). Frontend: 24 tests/build, full lint and changed-file strict mypy passed. The clearly named Workspace verification case contains the browser smoke checks.
+
+Next:
+- Review the modified existing localhost:5173 stack, then authorize team deployment when happy with it. A complete backup/restore rehearsal and fresh provider responses remain unverified; no separate database environment was started.
+
+## 2026-10-02 — reviewed investigation copilot
+Done:
+- Added selected-entity planning, reviewed passive execution through existing enrichment workers, bounded evidence summaries, reusable flow recipes and pending draft findings. Reuses the configured Mistral/OpenAI provider; missing model configuration produces explicitly labelled deterministic suggestions and summaries.
+- Plans allow at most ten selected entities and three independent steps: root-domain normalization and exact domain/IP ThreatFox lookups. API checks current permissions, compatible IDs/types, provider prerequisites and entity versions; model text cannot supply commands, URLs, Cypher or new target scope. Structured context is bounded and credential fields removed.
+- All steps serialize before queueing; partial broker failures retain the IDs already queued. UI tolerates scan rows appearing after tasks are consumed, preserves reviewed entity labels and offers bounded polling/recovery. Saving recipes after enrichment does not depend on stale node versions and stores no original entity IDs.
+- Source checks: 721 Python tests passed (58 types, 487 core, 128 enrichers, 48 API); four optional live Neo4j tests skipped. Frontend: 31 tests and production build passed. Full lint passed with 129 inherited frontend warnings; changed Python mypy passed. Frontend typecheck retains 84 inherited diagnostics with none in changed files.
+
+Next:
+- Apply the combined source to the existing local API/worker/frontend images, verify the selected-entity journey in the browser, then publish the follow-on draft PR. Team deployment remains pending approval.

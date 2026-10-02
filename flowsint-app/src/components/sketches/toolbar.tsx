@@ -38,6 +38,7 @@ import { sketchService } from '@/api/sketch-service'
 import { useParams } from '@tanstack/react-router'
 import { exportToPNG } from './graph/utils/export-to-png'
 import { PathFinder } from './graph/actions/path-finder'
+import { InvestigationCopilot } from './investigation-copilot'
 
 // Tooltip wrapper component to avoid repetition
 export const ToolbarButton = memo(function ToolbarButton({
@@ -341,6 +342,7 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
             badge={areMergeable ? selectedNodes.length : null}
           />
           <PathFinder />
+          {sketchId && <InvestigationCopilot key={sketchId} sketchId={sketchId} />}
           <Separator className="w-full" />
           <ToolbarButton
             icon={<NetworkIcon className="h-4 w-4 opacity-70" />}
