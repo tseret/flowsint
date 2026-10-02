@@ -9,6 +9,8 @@ import {
   isRunComplete,
   pollCopilotRun,
   externalCallCount,
+  providerName,
+  type CopilotStep,
   type CopilotPlan,
   type CopilotRun,
   type CopilotSummary
@@ -53,9 +55,14 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const [flowId, setFlowId] = useState<string | null>(null)
   const [findingSaved, setFindingSaved] = useState(false)
   const [labels, setLabels] = useState<Record<string, string>>({})
+  const [skipped, setSkipped] = useState<CopilotStep[]>([])
   const [pollUntil, setPollUntil] = useState(0)
   const summaryRequested = useRef(false)
   const ids = selected.map((node) => String(node.id))
+  const ipsOnly =
+    selected.length > 0 &&
+    selected.length <= 10 &&
+    selected.every((node) => node.nodeType.toLowerCase() === 'ip')
   const valid = !!plan && matchesPlan(plan, sketchId, ids, question)
   const scans = useQuery({
     queryKey: ['copilot', 'runs', runs.map((run) => run.id)],
@@ -108,6 +115,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
     setSummary(null)
     setFlowId(null)
     setFindingSaved(false)
+    setSkipped([])
     setLabels(Object.fromEntries(selected.map((node) => [String(node.id), node.nodeLabel])))
     summaryRequested.current = false
     try {
@@ -116,6 +124,39 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to suggest a plan')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function collect() {
+    if (!canEdit || !ipsOnly || busy || runs.length > 0) return
+    const collectionQuestion =
+      question.trim() || 'Gather passive IP intelligence and summarize the supporting evidence.'
+    setQuestion(collectionQuestion)
+    setBusy('collect')
+    setError(null)
+    setPlan(null)
+    setRuns([])
+    setSummary(null)
+    setFlowId(null)
+    setFindingSaved(false)
+    setSkipped([])
+    setLabels(Object.fromEntries(selected.map((node) => [String(node.id), node.nodeLabel])))
+    summaryRequested.current = false
+    try {
+      const response = await copilotService.collect({
+        sketch_id: sketchId,
+        node_ids: ids,
+        question: collectionQuestion
+      })
+      setPlan(response.plan)
+      setRuns(response.runs)
+      setSkipped(response.skipped)
+      if (response.error) setError(response.error)
+      setPollUntil(Date.now() + 10 * 60 * 1000)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to gather IP intelligence')
     } finally {
       setBusy(null)
     }
@@ -161,7 +202,13 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
       const sketch = await sketchService.getById(plan.sketch_id)
       await collaborationService.create(sketch.investigation_id, {
         kind: 'finding',
-        body: summary.summary,
+        body: [
+          summary.summary,
+          ...skipped.map(
+            (step) =>
+              `Collection gap: ${providerName(step.enricher)} ${step.enricher} skipped; missing ${step.missing_keys.join(', ')}.`
+          )
+        ].join('\n'),
         sketch_id: plan.sketch_id,
         evidence: summary.evidence.map((item) => `Run ${item.run_id}: ${item.status}`).join('\n'),
         assessment: 'Copilot draft. Review the cited run evidence before accepting.',
@@ -190,8 +237,8 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
           <SheetHeader>
             <SheetTitle>Investigate selected entities</SheetTitle>
             <SheetDescription>
-              Review passive enrichment suggestions before running them. Each step uses only the
-              selected entities.
+              Gather passive intelligence on selected IPs for final review, or review an enrichment
+              plan before running it.
             </SheetDescription>
           </SheetHeader>
           <div className="px-4 pb-6 space-y-4">
@@ -221,12 +268,28 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
               />
             </label>
             {runs.length === 0 && (
-              <Button
-                onClick={propose}
-                disabled={!!busy || !question.trim() || selected.length < 1 || selected.length > 10}
-              >
-                {busy === 'plan' && <Loader2 className="h-4 w-4 animate-spin" />} Suggest a plan
-              </Button>
+              <div className="space-y-2">
+                <Button onClick={collect} disabled={!canEdit || !!busy || !ipsOnly}>
+                  {busy === 'collect' && <Loader2 className="h-4 w-4 animate-spin" />} Gather IP
+                  intelligence
+                </Button>
+                <p className="text-sm text-muted-foreground">
+                  Runs configured passive lookups on up to 10 selected IPs, then summarizes evidence
+                  for your review. Up to {ipsOnly ? selected.length * 6 : 60} external calls across
+                  Shodan, Modat, VirusTotal and ThreatFox. Missing credentials are skipped; newly
+                  discovered entities are never followed automatically.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={propose}
+                  disabled={
+                    !!busy || !question.trim() || selected.length < 1 || selected.length > 10
+                  }
+                >
+                  {busy === 'plan' && <Loader2 className="h-4 w-4 animate-spin" />} Suggest a plan
+                  to review first
+                </Button>
+              </div>
             )}
             {error && (
               <p role="alert" className="text-sm text-destructive">
@@ -263,10 +326,24 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                 )}
                 <h3 className="font-medium">Review enrichment steps</h3>
                 <p className="text-sm">
-                  Maximum external lookup calls: {externalCallCount(plan.steps)}. ThreatFox uses up
-                  to one call per entity; root domain extraction runs locally. No automatic pivots
-                  or follow-up enrichment.
+                  Maximum external lookup calls: {externalCallCount(plan.steps)}. VirusTotal domain
+                  history is limited to two pages per IP; other provider lookups use one call per
+                  entity. Root domain extraction runs locally. No automatic pivots or follow-up
+                  enrichment.
                 </p>
+                {skipped.length > 0 && (
+                  <section className="rounded border p-3 text-sm space-y-2">
+                    <h3 className="font-medium">Skipped providers</h3>
+                    {skipped.map((step, index) => (
+                      <p key={`${step.enricher}-${index}`}>
+                        {providerName(step.enricher)} · {step.enricher}:{' '}
+                        {step.missing_keys.length
+                          ? `Missing credentials: ${step.missing_keys.join(', ')}`
+                          : step.reason}
+                      </p>
+                    ))}
+                  </section>
+                )}
                 {plan.steps.length === 0 && (
                   <p className="text-sm">No compatible passive steps were suggested.</p>
                 )}
@@ -278,10 +355,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                     <p className="font-medium break-all">{step.enricher}</p>
                     <p>{step.reason}</p>
                     <p>{step.node_ids.length} selected entities · one run</p>
-                    <p>
-                      Provider:{' '}
-                      {step.enricher.endsWith('_threatfox') ? 'ThreatFox' : 'Local processing'}
-                    </p>
+                    <p>Provider: {providerName(step.enricher)}</p>
                     <ul className="list-disc pl-4 break-all">
                       {step.node_ids.map((id) => (
                         <li key={id}>{labels[id] ?? id}</li>
@@ -379,7 +453,12 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                         </summary>
                         <pre className="whitespace-pre-wrap break-all mt-2">
                           {JSON.stringify(
-                            { summary: item.summary, details: item.details },
+                            {
+                              summary: item.summary,
+                              details: item.details,
+                              relationships: item.relationships,
+                              relationships_truncated: item.relationships_truncated
+                            },
                             null,
                             2
                           )}
@@ -410,6 +489,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                         setSummary(null)
                         setError(null)
                         setFindingSaved(false)
+                        setSkipped([])
                         summaryRequested.current = false
                       }}
                     >

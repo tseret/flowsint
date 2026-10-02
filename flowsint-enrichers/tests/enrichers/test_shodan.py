@@ -14,6 +14,9 @@ PAYLOAD = {
             "product": "nginx",
             "version": "1.24",
             "data": "B" * 600,
+            "timestamp": "2026-09-30T10:00:00",
+            "hash": 123,
+            "ssl": {"cert": {"fingerprint": {"sha256": "a" * 64}}},
         },
         {"port": 443, "transport": "tcp", "product": "dup"},
         {"port": 53, "transport": "udp", "data": "x"},
@@ -55,6 +58,14 @@ async def test_scan_maps_ports_and_dedupes_by_port_transport(monkeypatch):
         (443, "udp", "open", None),
     ]
     assert ports[0].banner == "B" * 500
+    assert ports[0].model_extra["fingerprints"] == {
+        "banner_hash": "123",
+        "tls_sha256": "a" * 64,
+    }
+    assert ports[0].model_extra["observed_at"] == "2026-09-30T10:00:00"
+    assert (
+        ports[0].model_extra["source_ref"] == "https://www.shodan.io/host/93.184.216.34"
+    )
 
 
 @pytest.mark.asyncio
@@ -82,7 +93,9 @@ async def test_postprocess_creates_port_and_hostname_edges(monkeypatch):
     monkeypatch.setattr(
         e,
         "create_relationship",
-        lambda s, d, r: edges.append((s.address, getattr(d, "domain", d.nodeLabel), r)),
+        lambda s, d, r, **kwargs: edges.append(
+            (s.address, getattr(d, "domain", d.nodeLabel), r)
+        ),
     )
     ips = [Ip(address="93.184.216.34")]
 

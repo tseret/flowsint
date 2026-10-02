@@ -20,11 +20,28 @@ export type CopilotPlan = {
 export type CopilotRun = { id: string; enricher: string; node_ids: string[] }
 export type CopilotSummary = {
   summary: string
-  evidence: { run_id: string; status: string; details: unknown; summary?: unknown }[]
+  evidence: {
+    run_id: string
+    status: string
+    details: unknown
+    summary?: unknown
+    relationships?: unknown
+    relationships_truncated?: boolean
+  }[]
   context_truncated: boolean
 }
 
 export const copilotService = {
+  collect: (body: {
+    sketch_id: string
+    node_ids: string[]
+    question: string
+  }): Promise<{
+    plan: CopilotPlan
+    runs: CopilotRun[]
+    skipped: CopilotStep[]
+    error?: string
+  }> => fetchWithAuth('/api/copilot/collect', { method: 'POST', body: JSON.stringify(body) }),
   plan: (body: { sketch_id: string; node_ids: string[]; question: string }): Promise<CopilotPlan> =>
     fetchWithAuth('/api/copilot/plan', { method: 'POST', body: JSON.stringify(body) }),
   run: (body: CopilotPlan): Promise<{ runs: CopilotRun[]; error?: string }> =>
@@ -53,9 +70,23 @@ export async function pollCopilotRun(id: string): Promise<Scan> {
 
 export function externalCallCount(steps: CopilotStep[]) {
   return steps.reduce(
-    (total, step) => total + (step.enricher.endsWith('_threatfox') ? step.node_ids.length : 0),
+    (total, step) => total + (passiveProviders[step.enricher]?.calls ?? 0) * step.node_ids.length,
     0
   )
+}
+
+const passiveProviders: Record<string, { name: string; calls: number }> = {
+  domain_to_root_domain: { name: 'Local processing', calls: 0 },
+  domain_to_threatfox: { name: 'ThreatFox', calls: 1 },
+  ip_to_threatfox: { name: 'ThreatFox', calls: 1 },
+  ip_to_ports_shodan: { name: 'Shodan', calls: 1 },
+  ip_to_ports_modat: { name: 'Modat', calls: 1 },
+  ip_to_reputation_virustotal: { name: 'VirusTotal', calls: 1 },
+  ip_to_domains_virustotal: { name: 'VirusTotal', calls: 2 }
+}
+
+export function providerName(enricher: string) {
+  return passiveProviders[enricher]?.name ?? 'Unknown provider'
 }
 
 export function matchesPlan(plan: CopilotPlan, sketchId: string, ids: string[], question: string) {

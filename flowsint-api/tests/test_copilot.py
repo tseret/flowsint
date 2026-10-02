@@ -81,14 +81,14 @@ def _plan(sketch_id, steps=None, node_ids=None):
     }
 
 
-def _key(db_session, sketch_id):
+def _key(db_session, sketch_id, name="THREATFOX_API_KEY"):
     from flowsint_core.core.models import Sketch
 
     owner_id = db_session.get(Sketch, UUID(sketch_id)).owner_id
     key = Key(
         id=uuid4(),
         owner_id=owner_id,
-        name="THREATFOX_API_KEY",
+        name=name,
         ciphertext=b"test",
         iv=b"test",
         salt=b"test",
@@ -574,3 +574,124 @@ def test_summary_without_model_reports_limits_and_run_evidence(
     assert "inconclusive" in result["summary"]
     assert result["evidence"][0]["run_id"] == str(run.id)
     backend[2].assert_not_called()
+
+
+def test_collect_uses_all_ready_passive_providers_and_skips_missing_keys(
+    client, db_session, backend
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    _key(db_session, sketch_id, "VT_API_KEY")
+    response = client.post(
+        "/api/copilot/collect", headers=headers, json=_request(sketch_id, ["ip-1"])
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert {step["enricher"] for step in result["plan"]["steps"]} == {
+        "ip_to_domains_virustotal",
+        "ip_to_reputation_virustotal",
+    }
+    assert {step["enricher"] for step in result["skipped"]} == {
+        "ip_to_threatfox",
+        "ip_to_ports_shodan",
+    }
+    assert result["plan"]["node_versions"] == {"ip-1": 1}
+    for call in backend[2].call_args_list:
+        assert call.kwargs["args"][1][0]["address"] == "192.0.2.1"
+        assert call.kwargs["kwargs"]["params"] == (
+            {"max_pages": 2}
+            if call.kwargs["args"][0] == "ip_to_domains_virustotal"
+            else {}
+        )
+
+
+@pytest.mark.parametrize("nodes", [["domain-1"], ["ip-1", "domain-1"], ["other-node"]])
+def test_collect_rejects_non_ip_or_unselected_inputs(
+    client, db_session, backend, nodes
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    _key(db_session, sketch_id)
+    response = client.post(
+        "/api/copilot/collect", headers=headers, json=_request(sketch_id, nodes)
+    )
+    assert response.status_code in {404, 422}
+    backend[2].assert_not_called()
+
+
+def test_collect_requires_edit_permission(client, db_session, backend):
+    headers, sketch_id = _seed_user(db_session, (Role.VIEWER,))
+    response = client.post(
+        "/api/copilot/collect", headers=headers, json=_request(sketch_id, ["ip-1"])
+    )
+    assert response.status_code == 403
+    backend[1].assert_not_called()
+    backend[2].assert_not_called()
+
+
+def test_collect_without_provider_keys_queues_nothing(client, db_session, backend):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    response = client.post(
+        "/api/copilot/collect", headers=headers, json=_request(sketch_id, ["ip-1"])
+    )
+    assert response.status_code == 422
+    assert "SHODAN_API_KEY" in response.json()["detail"]
+    backend[2].assert_not_called()
+
+
+def test_collect_checks_subscription_before_queuing_provider_usage(
+    client, db_session, backend, monkeypatch
+):
+    from fastapi import HTTPException
+
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    _key(db_session, sketch_id)
+
+    def unavailable(db, user):
+        raise HTTPException(502, "Reconnect ChatGPT")
+
+    monkeypatch.setattr(route, "_provider", unavailable)
+    response = client.post(
+        "/api/copilot/collect", headers=headers, json=_request(sketch_id, ["ip-1"])
+    )
+    assert response.status_code == 502
+    backend[2].assert_not_called()
+
+
+def test_summary_includes_only_relationship_observations_from_selected_runs(
+    client, db_session, backend
+):
+    headers, sketch_id = _seed_user(db_session, (Role.VIEWER,))
+    run = _run(db_session, sketch_id)
+    observation = {
+        "scan_id": str(run.id),
+        "provider": "VirusTotal",
+        "observed_at": "2026-09-30",
+    }
+    backend[0].query.return_value = [
+        {
+            "source": "example.org",
+            "target": "192.0.2.1",
+            "relationship": "PASSIVE_DNS_RESOLVED_TO",
+            "observations": [
+                json.dumps(observation),
+                json.dumps({"scan_id": str(uuid4()), "source_ref": "other-run"}),
+                "invalid-json",
+            ],
+        }
+    ]
+    response = client.post(
+        "/api/copilot/summary",
+        headers=headers,
+        json={
+            "sketch_id": sketch_id,
+            "run_ids": [str(run.id)],
+            "question": "Summarize",
+        },
+    )
+    assert response.status_code == 200
+    relationships = response.json()["evidence"][0]["relationships"]
+    assert relationships[0]["observations"] == [observation]
+    assert "other-run" not in json.dumps(relationships)
+    assert backend[0].query.call_args.args[1] == {
+        "sketch_id": sketch_id,
+        "run_ids": [str(run.id)],
+    }

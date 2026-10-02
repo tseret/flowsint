@@ -67,6 +67,29 @@ def test_catalog_rejects_changed_registry_input_contract() -> None:
     )
 
 
+def test_ip_catalog_adds_indexed_sources_with_server_required_credentials():
+    names = [
+        "ip_to_ports_shodan",
+        "ip_to_ports_modat",
+        "ip_to_domains_virustotal",
+        "ip_to_reputation_virustotal",
+    ]
+    catalog = eligible_catalog(
+        [{"name": name, "inputs": {"type": "Ip"}} for name in names]
+        + [{"name": "ip_to_ports", "inputs": {"type": "Ip"}}],
+        [{"id": "ip", "nodeType": "ip"}, {"id": "domain", "nodeType": "domain"}],
+        {"VT_API_KEY"},
+    )
+    assert [item["enricher"] for item in catalog] == names
+    assert [item["missing_keys"] for item in catalog] == [
+        ["SHODAN_API_KEY"],
+        ["MODAT_API_KEY"],
+        [],
+        [],
+    ]
+    assert all(item["node_ids"] == ["ip"] for item in catalog)
+
+
 def test_catalog_available_key_names_clear_prerequisite() -> None:
     metadata = [
         {
