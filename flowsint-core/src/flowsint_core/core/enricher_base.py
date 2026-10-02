@@ -159,9 +159,13 @@ class Enricher(ABC):
             validated = self.ParamsModel(**resolved_params)
             self.params = validated.model_dump()
         except ValidationError as e:
-            raise InvalidEnricherParams(
-                f"Enricher '{self.name()}' received invalid parameters: {e}"
+            fields = ", ".join(
+                f"{'.'.join(map(str, error['loc']))} ({error['type']})"
+                for error in e.errors(include_input=False)
             )
+            raise InvalidEnricherParams(
+                f"Enricher '{self.name()}' received invalid parameters: {fields}"
+            ) from None
 
     def resolve_params(self) -> Dict[str, Any]:
         resolved = {}

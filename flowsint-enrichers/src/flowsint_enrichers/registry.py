@@ -24,7 +24,7 @@ class EnricherRegistry:
     Stores mappings: enricher name -> enricher class
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._enrichers: Dict[str, Type[Enricher]] = {}
 
     def register(self, enricher_class: Type[E]) -> Type[E]:
@@ -42,7 +42,7 @@ class EnricherRegistry:
         return name in self._enrichers
 
     def get_enricher(
-        self, name: str, sketch_id: str, scan_id: str, **kwargs
+        self, name: str, sketch_id: str, scan_id: str, **kwargs: Any
     ) -> Enricher:
         if name not in self._enrichers:
             raise Exception(f"Enricher '{name}' not found")
@@ -83,7 +83,7 @@ class EnricherRegistry:
         )
 
     def list_by_categories(self) -> Dict[str, List[Dict[str, str]]]:
-        enrichers_by_category = {}
+        enrichers_by_category: Dict[str, List[Dict[str, str]]] = {}
 
         for enricher in self._enrichers.values():
             category = enricher.category()

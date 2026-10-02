@@ -1,11 +1,12 @@
 """Test simplified API for create_node and create_relationship."""
 
 from typing import Any, Dict, List, Optional
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel, Field
 
-from flowsint_core.core.enricher_base import Enricher
+from flowsint_core.core.enricher_base import Enricher, InvalidEnricherParams
 from flowsint_types.domain import Domain
 from flowsint_types.individual import Individual
 
@@ -209,3 +210,22 @@ async def test_explicit_and_legacy_issues_are_both_retained_without_duplicate_me
         {"outcome": "partial", "message": "Truncated response"},
         {"outcome": "quota_exceeded", "message": "Provider HTTP 429"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_invalid_params_identify_missing_field_without_logging_resolved_secret():
+    vault = Mock()
+    vault.get_secret.return_value = "sensitive-api-key"
+    enricher = MockEnricher(
+        vault=vault,
+        graph_service=Mock(),
+        params_schema=[
+            {"name": "API_KEY", "type": "vaultSecret", "required": True},
+            {"name": "port", "type": "number", "required": True},
+        ],
+    )
+
+    with pytest.raises(InvalidEnricherParams, match=r"port \(missing\)") as error:
+        await enricher.async_init()
+
+    assert "sensitive-api-key" not in str(error.value)

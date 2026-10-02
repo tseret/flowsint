@@ -137,3 +137,12 @@ Next:
 - Review the draft PR and explicitly authorize deployment before migrating/replacing the running stack. Verify the new UI journeys after deployment.
 - Retry `make build-local` when Docker responds normally; do not start extra services for verification.
 - Perform the documented backup/restore rehearsal against separate volumes when additional database services are authorized. Live provider mapping/quota checks remain dependent on provider access; no fresh provider calls were made for this change.
+
+## 2026-10-02 — combine current local runtime for review
+Done:
+- User clarified that requested modifications should be applied to the existing local stack while iterating; team deployment follows approval of the local result.
+- Created local/investigation-workspace in /private/tmp/flowsint-local-workspace, preserving both feature worktrees. Retained the current runtime's parameter-dialog fix, redacted parameter errors, registry annotations and three additional passive provider modules. Combined both regression sets; adapted existing edge expectations for retained observations and included Modat port hosts.
+- Combined Python suites, frontend 23 tests, production build and full lint passed. Current worker had no active/reserved jobs before maintenance preparation.
+
+Next:
+- Build matching images, back up existing data, update only local application services and verify the new UI journeys. No team deployment is authorized yet.
