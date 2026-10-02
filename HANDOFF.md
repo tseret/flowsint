@@ -240,3 +240,13 @@ Done:
 
 Next:
 - Inspect the refreshed service evidence in the graph and copilot. Other legacy Modat port records need an explicitly chosen passive refresh to recover discarded metadata. Autonomous external infrastructure expansion is not implemented; team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-02 — human-triggered indexed service lookup and Port journey
+Done:
+- Added contextual Port review and explicit source-IP passive service refreshes, fixing the dead Port-category launcher. Ownership is resolved from a unique scoped HAS_PORT source and checked against the recorded host; missing/ambiguous owners disable actions.
+- Added server-owned Modat service-query previews and one-page user-triggered fingerprint lookup. Stored endpoint/hash/version, permissions and credentials are rechecked; no arbitrary query/value inputs, LLM usage, three-family candidate gate, follow-up matched-IP requests or automatic graph insertions. Matches preserve exact hash comparisons, banners, observation dates, source references and truncation.
+- Reused pending case findings for indexed candidates with bounded evidence snapshots, exact-evidence retry recovery and ordinary case review controls. Preserved Modat scanned_at and readable banners instead of discarding context.
+- Feature checks in progress; focused API/Modat and frontend regressions pass. Existing integration connector work remains preserved.
+
+Next:
+- Complete final checks, merge into the managed integration checkout, build images sequentially and verify the actual user-requested HASSH lookup in the existing stack. Update draft PR; team deployment remains pending approval.

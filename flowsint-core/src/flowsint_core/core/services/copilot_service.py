@@ -359,7 +359,8 @@ def service_fingerprint_evidence(
             and isinstance(value, (str, int))
             and not isinstance(value, bool)
         }
-        if not fingerprints:
+        number = data.get("nodeProperties.number")
+        if type(number) is not int or not 1 <= number <= 65535:
             continue
         safe, clipped = _safe_context(fingerprints)
         truncated |= clipped
@@ -368,6 +369,14 @@ def service_fingerprint_evidence(
                 "source_id": row["source_id"],
                 "source_label": str(row.get("source_label", ""))[:200],
                 "service_id": str(row.get("service_id", ""))[:200],
+                "service_version": data.get("version", 0),
+                "host": str(
+                    data.get("nodeProperties.host") or row.get("source_address") or ""
+                )[:100],
+                "banner": str(data.get("nodeProperties.banner") or "")[:4000],
+                "retrieved_at": str(data.get("nodeProperties.retrieved_at") or "")[
+                    :100
+                ],
                 "port": data.get("nodeProperties.number"),
                 "transport": str(data.get("nodeProperties.protocol") or "")[:20],
                 "service": str(data.get("nodeProperties.service") or "")[:100],

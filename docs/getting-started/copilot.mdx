@@ -34,29 +34,48 @@ that count. Normalization makes no external requests. Saved copilot DNS recipes
 retain the two-page limit. Provider quota failures and partial coverage remain
 visible in run evidence.
 
-## Review related IP evidence
+## Review services and indexed fingerprint matches
 
-With IPs selected, choose **Review related IP evidence** in the copilot. It reads
-existing or imported Modat pivot paths and shared historical DNS paths in the
-current sketch. Recorded service fingerprint leads are shown separately even
-when there are no related-IP paths. Modat port collection retains returned SSH
-HASSH, banner, HTTP and TLS fingerprints, provider source and observation dates
-when supplied. Older Modat port records need a passive service refresh to recover
-previously discarded metadata. Port collection does not search those fingerprints
-for other hosts; the panel labels them as unqueried leads for analyst review.
+Select a Port to inspect its endpoint, application protocol, readable banner,
+provider, observation/retrieval dates and recorded fingerprints. **Refresh from
+Modat (passive)** and **Refresh from Shodan (passive)** refresh indexed service
+records for the port’s owning IP. They require one unambiguous `HAS_PORT` owner
+matching the recorded host, edit permission and configured provider credentials.
+They can add other indexed ports on that same host; they do not probe the host.
 
-Each candidate includes its source IP, supporting graph path and
-recorded observations. Shared hosting or ports alone do not establish an association.
+For recorded Modat services, choose a fingerprint and inspect **Exact Modat
+query**, then click **Search Modat index**. HASSH is selected by default when
+available. The server builds the query from stored service evidence, checks its
+version and executes one service-index request with the same port, protocol,
+transport and fingerprint. A single supported fingerprint is sufficient to
+return unverified candidates; the old related-IP connector’s three-family gate
+does not apply. No LLM is needed or charged for this lookup.
 
-Record an association as pending, accepted or rejected. Decisions are saved as
-ordinary case findings and restored when the same evidence is reviewed again.
-Changed evidence requires a new review; concurrent edits require reloading the
-current decision. Readers can inspect evidence; editors can record decisions.
+Matches show their fingerprints beside the source values, readable banners,
+observation dates and provider references. They are leads for review: common
+software or configuration can produce shared hashes without common control.
+Choose **Save candidate as pending finding** to retain the exact query and
+supporting snapshot in the investigation, attached to the source service.
+Existing case review controls handle decisions. Query results never insert new
+IP graph nodes or query/enrich matched hosts automatically.
 
-This stage does not invoke `ip_to_ips_modat`, query candidate IPs or use the LLM.
-It shows at most 20 candidates and five supporting paths per candidate, and flags
-truncated evidence. An empty result means no supported path was found in the
-bounded existing graph, not that no related infrastructure exists.
+The lookup reads one page of up to 50 indexed records, excludes the source IP,
+verifies returned endpoint/hash matches, and flags omitted or incomplete results.
+Provider limits, key errors and unusable responses are shown explicitly without
+billing/provider fallback. Stale service evidence requires reload before another
+search. Query syntax uses the service-index endpoint, where all filters apply to
+one service record; see the [Modat API reference](https://api.magnify.modat.io/).
+
+With IPs selected, **Review related IP evidence** in the copilot also shows these
+service controls alongside existing/imported Modat pivot and shared historical
+DNS paths in the current sketch. Existing graph associations can be recorded as
+pending, accepted or rejected findings; unchanged evidence restores its decision.
+ASN/port-only links do not establish an association. Graph review reads at most
+20 candidates, five paths per candidate and 50 services; truncation is flagged.
+
+Older Modat port records need a passive refresh to recover discarded fingerprints,
+banners and provider observation dates. Service evidence reloads when graph
+updates advance the port version, and a manual reload remains available.
 
 ## Model configuration and evidence
 

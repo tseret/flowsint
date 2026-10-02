@@ -3,9 +3,11 @@
 import asyncio
 import json
 import re
+from ipaddress import ip_address
 from typing import Any, cast
 from uuid import UUID
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field
@@ -43,8 +45,14 @@ from flowsint_core.core.services.copilot_service import (
 from flowsint_core.core.services.type_registry_service import (
     create_type_registry_service,
 )
+from flowsint_core.core.vault import Vault
 from flowsint_core.utils import extract_input_schema_flow
 from flowsint_enrichers import ENRICHER_REGISTRY
+from flowsint_enrichers.ip.to_ports_modat import (
+    FIELDS,
+    lookup_recorded_fingerprint,
+    recorded_fingerprint_query,
+)
 from flowsint_types import Domain, Ip
 
 router = APIRouter()
@@ -80,6 +88,17 @@ def _model_failure(error: Exception, fallback: str) -> HTTPException:
             504, "The model connection failed or timed out. Try again later."
         )
     return HTTPException(502, fallback)
+
+
+class ServiceContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sketch_id: UUID
+    service_id: str = Field(min_length=1, max_length=200)
+
+
+class FingerprintRequest(ServiceContextRequest):
+    service_version: int = Field(ge=0)
+    fingerprint: str = Field(min_length=1, max_length=100)
 
 
 class SavePlan(CopilotPlan):
@@ -396,13 +415,128 @@ def review_existing_ip_evidence(
         WHERE elementId(source) IN $node_ids AND source.sketch_id = $sketch_id
           AND port.sketch_id = $sketch_id AND port.nodeType = 'port'
           AND source.deleted_at IS NULL AND port.deleted_at IS NULL AND r.deleted_at IS NULL
-        RETURN elementId(source) AS source_id, source.nodeLabel AS source_label,
+        RETURN DISTINCT elementId(source) AS source_id, source.nodeLabel AS source_label,
+          source.`nodeProperties.address` AS source_address,
           elementId(port) AS service_id, properties(port) AS data
         ORDER BY source_id, service_id LIMIT 51""",
         {"node_ids": payload.node_ids, "sketch_id": str(payload.sketch_id)},
     )
-    result.update(service_fingerprint_evidence(services, set(payload.node_ids)))
+    service_evidence = service_fingerprint_evidence(services, set(payload.node_ids))
+    for service in service_evidence["services"]:
+        _add_recorded_queries(service)
+    result.update(service_evidence)
     return result
+
+
+def _add_recorded_queries(service: dict[str, Any]) -> None:
+    service["modat_queries"] = {
+        field: query
+        for field in FIELDS
+        if (query := recorded_fingerprint_query(service, field))
+    }
+
+
+def _service_context(
+    payload: ServiceContextRequest, db: Session, user: Profile
+) -> dict[str, Any]:
+    resolver = create_type_registry_service(db).build_type_resolver(user.id)
+    graph = create_graph_service(
+        sketch_id=str(payload.sketch_id), type_resolver=resolver
+    )
+    nodes = graph.get_nodes_by_ids([payload.service_id])
+    if len(nodes) != 1 or nodes[0].id != payload.service_id:
+        raise HTTPException(404, "Service entity not found")
+    if nodes[0].nodeType.lower() != "port":
+        raise HTTPException(422, "Select a Port entity for a service lookup")
+    rows = graph.query(
+        """MATCH (source)-[r:HAS_PORT]-(port)
+        WHERE elementId(port) = $service_id AND port.sketch_id = $sketch_id
+          AND source.sketch_id = $sketch_id AND source.nodeType = 'ip'
+          AND source.deleted_at IS NULL AND port.deleted_at IS NULL AND r.deleted_at IS NULL
+        RETURN DISTINCT elementId(source) AS source_id, source.nodeLabel AS source_label,
+          source.`nodeProperties.address` AS source_address,
+          elementId(port) AS service_id, properties(port) AS data
+        ORDER BY source_id LIMIT 2""",
+        {"sketch_id": str(payload.sketch_id), "service_id": payload.service_id},
+    )
+    if len(rows) != 1:
+        raise HTTPException(
+            422, "Service must have exactly one owning IP in this sketch"
+        )
+    try:
+        address = str(ip_address(rows[0].get("source_address")))
+        host = rows[0].get("data", {}).get("nodeProperties.host")
+        if host and str(ip_address(host)) != address:
+            raise ValueError("Host mismatch")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            422, "Service ownership is missing or inconsistent"
+        ) from None
+    result = service_fingerprint_evidence(rows, {rows[0]["source_id"]})
+    if len(result["services"]) != 1:
+        raise HTTPException(422, "Stored service endpoint is incomplete")
+    service = cast(dict[str, Any], result["services"][0])
+    service["host"] = address
+    service["service_version"] = nodes[0].version
+    _add_recorded_queries(service)
+    return service
+
+
+@router.post("/service-context")
+def recorded_service_context(
+    payload: ServiceContextRequest,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    _check_sketch(db, current_user, payload.sketch_id, write=False)
+    return _service_context(payload, db, current_user)
+
+
+@router.post("/fingerprint")
+def query_recorded_service_fingerprint(
+    payload: FingerprintRequest,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    # Provider usage is an explicit editor action, never a model-issued tool.
+    _check_sketch(db, current_user, payload.sketch_id, write=True)
+    service = _service_context(payload, db, current_user)
+    if service["service_version"] != payload.service_version:
+        raise HTTPException(409, "Service evidence changed. Reload before searching.")
+    if payload.fingerprint not in service["modat_queries"]:
+        raise HTTPException(
+            422, "That fingerprint has no supported recorded Modat service query"
+        )
+    key = Vault(db, current_user.id).get_secret("MODAT_API_KEY")
+    if not key:
+        raise HTTPException(422, "Configure MODAT_API_KEY in Vault before searching.")
+    try:
+        return cast(
+            dict[str, Any],
+            lookup_recorded_fingerprint(service, payload.fingerprint, key),
+        )
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else 502
+        if code == 429:
+            raise HTTPException(
+                503,
+                "Modat's lookup allowance or rate limit was reached. No fallback was used.",
+            ) from None
+        if code in {401, 403}:
+            raise HTTPException(
+                502, "Modat rejected the configured key or its search permissions."
+            ) from None
+        raise HTTPException(
+            502, "Modat could not complete the service query."
+        ) from None
+    except requests.RequestException:
+        raise HTTPException(
+            504, "The Modat lookup timed out or could not connect."
+        ) from None
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(
+            502, "Modat returned an unusable service response."
+        ) from None
 
 
 @router.post("/save")

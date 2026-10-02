@@ -34,13 +34,37 @@ export type CopilotServiceEvidence = {
   source_id: string
   source_label: string
   service_id: string
+  service_version: number
+  host: string
   port: number | null
   transport: string
   service: string
   provider: string
   observed_at: string
+  retrieved_at: string
+  banner: string
   source_ref: string
   fingerprints: Record<string, unknown>
+  modat_queries: Record<string, string>
+}
+export type FingerprintMatch = {
+  ip: string
+  port: number | null
+  transport: string
+  protocol: string
+  observed_at: string
+  banner: string
+  fingerprints: Record<string, string>
+  matching_fingerprints: string[]
+  source_ref: string
+}
+export type FingerprintResult = {
+  query: string
+  service: CopilotServiceEvidence
+  matches: FingerprintMatch[]
+  truncated: boolean
+  total_records: number | null
+  retrieved_at: string
 }
 export type CopilotSummary = {
   summary: string
@@ -56,6 +80,18 @@ export type CopilotSummary = {
 }
 
 export const copilotService = {
+  serviceContext: (body: {
+    sketch_id: string
+    service_id: string
+  }): Promise<CopilotServiceEvidence> =>
+    fetchWithAuth('/api/copilot/service-context', { method: 'POST', body: JSON.stringify(body) }),
+  fingerprint: (body: {
+    sketch_id: string
+    service_id: string
+    service_version: number
+    fingerprint: string
+  }): Promise<FingerprintResult> =>
+    fetchWithAuth('/api/copilot/fingerprint', { method: 'POST', body: JSON.stringify(body) }),
   candidates: (body: {
     sketch_id: string
     node_ids: string[]

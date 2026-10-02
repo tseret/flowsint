@@ -773,3 +773,209 @@ def test_candidate_review_exposes_service_hashes_without_external_queries(
     assert response.json()["services"][0]["fingerprints"] == {"ssh.hassh": "ab" * 16}
     provider.assert_not_called()
     backend[2].assert_not_called()
+
+
+@pytest.fixture
+def service_backend(backend):
+    from flowsint_types.port import Port
+
+    backend[3].append(
+        GraphNode(
+            id="service-22",
+            nodeLabel="22 ssh",
+            nodeType="port",
+            version=3,
+            nodeProperties=Port(
+                host="192.0.2.1",
+                number=22,
+                protocol="TCP",
+                service="ssh",
+                provider="Modat",
+                fingerprints={"ssh.hassh": "ab" * 16},
+            ),
+            nodeMetadata=NodeMetadata(),
+        )
+    )
+    backend[0].query.return_value = [
+        {
+            "source_id": "ip-1",
+            "source_label": "192.0.2.1",
+            "source_address": "192.0.2.1",
+            "service_id": "service-22",
+            "data": {
+                "version": 3,
+                "nodeProperties.host": "192.0.2.1",
+                "nodeProperties.number": 22,
+                "nodeProperties.protocol": "TCP",
+                "nodeProperties.service": "ssh",
+                "nodeProperties.provider": "Modat",
+                "nodeProperties.fingerprints.ssh.hassh": "ab" * 16,
+            },
+        }
+    ]
+    return backend
+
+
+def _service_request(sketch_id):
+    return {
+        "sketch_id": sketch_id,
+        "service_id": "service-22",
+        "service_version": 3,
+        "fingerprint": "ssh.hassh",
+    }
+
+
+def test_viewer_reads_service_context_without_provider_calls(
+    client, db_session, service_backend, monkeypatch
+):
+    headers, sketch_id = _seed_user(db_session, (Role.VIEWER,))
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    response = client.post(
+        "/api/copilot/service-context",
+        headers=headers,
+        json={"sketch_id": sketch_id, "service_id": "service-22"},
+    )
+    assert response.status_code == 200
+    assert response.json()["modat_queries"]["ssh.hassh"].startswith(
+        'port=22 protocol="ssh" transport="tcp"'
+    )
+    assert response.json()["host"] == "192.0.2.1"
+    assert response.json()["service_version"] == 3
+    lookup.assert_not_called()
+    service_backend[2].assert_not_called()
+    service_backend[1].reset_mock()
+    assert (
+        client.post(
+            "/api/copilot/fingerprint",
+            headers=headers,
+            json=_service_request(sketch_id),
+        ).status_code
+        == 403
+    )
+    service_backend[1].assert_not_called()
+    lookup.assert_not_called()
+
+
+def test_fingerprint_lookup_uses_only_current_owned_graph_evidence(
+    client, db_session, service_backend, monkeypatch
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    vault = MagicMock()
+    vault.return_value.get_secret.return_value = "private-key"
+    monkeypatch.setattr(route, "Vault", vault)
+    lookup = MagicMock(return_value={"matches": []})
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    response = client.post(
+        "/api/copilot/fingerprint", headers=headers, json=_service_request(sketch_id)
+    )
+    assert response.status_code == 200
+    assert lookup.call_args.args[0]["host"] == "192.0.2.1"
+    assert lookup.call_args.args[0]["fingerprints"] == {"ssh.hassh": "ab" * 16}
+    assert lookup.call_args.args[1:] == ("ssh.hassh", "private-key")
+    service_backend[2].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "override,code",
+    [
+        ({"service_version": 2}, 409),
+        ({"fingerprint": "anything"}, 422),
+        ({"service_id": "missing"}, 404),
+        ({"service_id": "ip-1"}, 422),
+        ({"query": "attacker query"}, 422),
+        ({"hash": "different"}, 422),
+    ],
+)
+def test_bad_stale_or_custom_lookup_is_rejected_before_provider(
+    client, db_session, service_backend, monkeypatch, override, code
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    assert (
+        client.post(
+            "/api/copilot/fingerprint",
+            headers=headers,
+            json={**_service_request(sketch_id), **override},
+        ).status_code
+        == code
+    )
+    lookup.assert_not_called()
+    service_backend[2].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "owner_rows",
+    [
+        [],
+        [
+            {
+                "source_id": "ip-1",
+                "source_address": "192.0.2.2",
+                "data": {"nodeProperties.host": "192.0.2.1"},
+            }
+        ],
+        [None, None],
+    ],
+)
+def test_missing_or_ambiguous_port_owner_rejected(
+    client, db_session, service_backend, monkeypatch, owner_rows
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    service_backend[0].query.return_value = owner_rows
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    assert (
+        client.post(
+            "/api/copilot/fingerprint",
+            headers=headers,
+            json=_service_request(sketch_id),
+        ).status_code
+        == 422
+    )
+    lookup.assert_not_called()
+
+
+def test_missing_modat_key_rejected_without_query(
+    client, db_session, service_backend, monkeypatch
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    vault = MagicMock()
+    vault.return_value.get_secret.return_value = None
+    monkeypatch.setattr(route, "Vault", vault)
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    assert (
+        client.post(
+            "/api/copilot/fingerprint",
+            headers=headers,
+            json=_service_request(sketch_id),
+        ).status_code
+        == 422
+    )
+    lookup.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status,expected", [(401, 502), (403, 502), (429, 503), (500, 502)]
+)
+def test_modat_failure_is_actionable_and_redacted(
+    client, db_session, service_backend, monkeypatch, status, expected
+):
+    import requests
+
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    vault = MagicMock()
+    vault.return_value.get_secret.return_value = "private-key"
+    monkeypatch.setattr(route, "Vault", vault)
+    response = requests.Response()
+    response.status_code = status
+    response._content = b"private-key provider details"
+    lookup = MagicMock(side_effect=requests.HTTPError("private-key", response=response))
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    result = client.post(
+        "/api/copilot/fingerprint", headers=headers, json=_service_request(sketch_id)
+    )
+    assert result.status_code == expected
+    assert "private-key" not in result.text

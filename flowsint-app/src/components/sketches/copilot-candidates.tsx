@@ -8,6 +8,7 @@ import { collaborationService, type CaseItem } from '@/api/collaboration-service
 import { sketchService } from '@/api/sketch-service'
 import { Button } from '@/components/ui/button'
 import { usePermissions } from '@/hooks/use-can'
+import { ServiceInvestigation } from './service-investigation'
 
 export function candidateFinding(sketchId: string, candidate: CopilotCandidate): Partial<CaseItem> {
   return {
@@ -173,25 +174,11 @@ export function CopilotCandidates({
             reflect common software or configuration and do not establish common control.
           </p>
           {result.services.map((service) => (
-            <article
-              key={`${service.source_id}-${service.service_id}`}
-              className="rounded border p-3 text-sm space-y-2"
-            >
-              <p className="font-medium">
-                {service.source_label} · {service.port}/{service.transport} · {service.service}
-              </p>
-              <p>
-                Provider: {service.provider || 'Not recorded'} · Observed:{' '}
-                {service.observed_at || 'Not recorded'}
-              </p>
-              <p className="break-all">Source: {service.source_ref || 'Not recorded'}</p>
-              <p className="text-muted-foreground break-all">
-                Service entity: {service.service_id}
-              </p>
-              <pre className="whitespace-pre-wrap break-all text-xs">
-                {JSON.stringify(service.fingerprints, null, 2)}
-              </pre>
-            </article>
+            <ServiceInvestigation
+              key={`${service.source_id}-${service.service_id}-${service.service_version}`}
+              sketchId={sketchId}
+              service={service}
+            />
           ))}
         </div>
       )}

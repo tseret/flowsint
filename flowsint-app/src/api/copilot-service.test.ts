@@ -25,6 +25,24 @@ const plan: CopilotPlan = {
 }
 
 describe('reviewed copilot plan', () => {
+  it('loads stored service context separately from an explicit versioned fingerprint lookup', async () => {
+    await copilotService.serviceContext({ sketch_id: 'sketch', service_id: 'port' })
+    expect(fetchWithAuth).toHaveBeenLastCalledWith('/api/copilot/service-context', {
+      method: 'POST',
+      body: JSON.stringify({ sketch_id: 'sketch', service_id: 'port' })
+    })
+    const request = {
+      sketch_id: 'sketch',
+      service_id: 'port',
+      service_version: 3,
+      fingerprint: 'banner_hash'
+    }
+    await copilotService.fingerprint(request)
+    expect(fetchWithAuth).toHaveBeenLastCalledWith('/api/copilot/fingerprint', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    })
+  })
   it('requests existing candidates only for the specified sketch and entities', async () => {
     const request = {
       sketch_id: 'sketch',

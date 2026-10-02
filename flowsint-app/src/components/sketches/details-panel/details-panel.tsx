@@ -31,7 +31,7 @@ import { Switch } from '@/components/ui/switch'
 import type { GraphNode, NodeProperties, NodeMetadata, NodeShape } from '@/types'
 import { sketchService } from '@/api/sketch-service'
 import { toast } from 'sonner'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/api/query-keys'
 import IconPicker from '@/components/shared/icon-picker'
 import Relationships from './relationships'
@@ -45,6 +45,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { MinimalTiptapEditor } from '@/components/analyses/editor/minimal-tiptap'
 import type { Content } from '@tiptap/react'
 import { CaseWorkspace } from '@/components/dashboard/investigation/case-workspace'
+import { PortInvestigation } from '../service-investigation'
+import { resolvePortSource } from '@/lib/port-source'
+import { enricherService } from '@/api/enricher-service'
+import { useLaunchEnricher } from '@/hooks/use-launch-enricher'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -303,6 +307,17 @@ const DetailsPanel = memo(() => {
   const { canEdit } = usePermissions()
   const nodesLength = useGraphStore((s) => s.nodesLength)
   const node = useGraphStore((s) => s.getCurrentNode())
+  const nodes = useGraphStore((s) => s.nodes)
+  const edges = useGraphStore((s) => s.edges)
+  const isPort = node?.nodeType.toLowerCase() === 'port'
+  const portSource = resolvePortSource(isPort ? node : null, nodes, edges)
+  const { launchEnricher } = useLaunchEnricher()
+  const readiness = useQuery({
+    queryKey: ['enrichers', 'readiness'],
+    queryFn: enricherService.readiness,
+    enabled: !!isPort && canEdit,
+    staleTime: 0
+  })
   const updateNode = useGraphStore((s) => s.updateNode)
   const [openIconPicker, setOpenIconPicker] = useState(false)
 
@@ -658,12 +673,61 @@ const DetailsPanel = memo(() => {
       {/* Enrich CTA */}
       {canEdit && (
         <div className="px-6 pb-4 shrink-0">
-          <LaunchFlow values={[node.id]} type={node.nodeType}>
-            <Button className="rounded-full h-8 gap-1.5 px-4 text-sm" size="sm">
-              <Rocket className="size-3.5" strokeWidth={1.7} />
-              Enrich
-            </Button>
-          </LaunchFlow>
+          {isPort ? (
+            <div className="space-y-2 text-xs">
+              <p>
+                Refresh provider observations for this port’s owning IP. Reads the provider index
+                and may add other ports observed on the same host.
+              </p>
+              {portSource.node && (
+                <p>Owning IP: {String(portSource.node.nodeProperties.address)}</p>
+              )}
+              {portSource.reason && <p className="text-muted-foreground">{portSource.reason}</p>}
+              {(['Modat', 'Shodan'] as const).map((provider) => {
+                const name = provider === 'Modat' ? 'ip_to_ports_modat' : 'ip_to_ports_shodan'
+                const configured =
+                  readiness.isSuccess &&
+                  !readiness.isFetching &&
+                  readiness.data?.[name]?.credentials_configured === true
+                const unavailable = readiness.isFetching
+                  ? 'Checking credentials…'
+                  : readiness.isError
+                    ? 'Connector readiness unavailable.'
+                    : !configured
+                      ? readiness.data?.[name]
+                        ? 'Credentials are not configured.'
+                        : 'Connector unavailable.'
+                      : null
+                return (
+                  <div key={name} className="space-y-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!sketchId || !portSource.node || !configured}
+                      onClick={() => {
+                        if (sketchId && portSource.node && configured)
+                          void launchEnricher([portSource.node.id], name, sketchId)
+                      }}
+                    >
+                      Refresh from {provider} (passive)
+                    </Button>
+                    {unavailable && (
+                      <p className="text-muted-foreground">
+                        {provider}: {unavailable}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <LaunchFlow values={[node.id]} type={node.nodeType}>
+              <Button className="rounded-full h-8 gap-1.5 px-4 text-sm" size="sm">
+                <Rocket className="size-3.5" strokeWidth={1.7} />
+                Enrich
+              </Button>
+            </LaunchFlow>
+          )}
         </div>
       )}
 
@@ -705,6 +769,15 @@ const DetailsPanel = memo(() => {
 
         {/* Properties tab */}
         <TabsContent value="properties" className="flex-1 min-h-0 overflow-y-auto mt-0 pb-6">
+          {isPort && sketchId && (
+            <div className="p-3" data-case-workspace>
+              <PortInvestigation
+                key={`${sketchId}:${node.id}:${node.version ?? 0}`}
+                sketchId={sketchId}
+                serviceId={node.id}
+              />
+            </div>
+          )}
           {investigationId && sketchId && node && (
             <div className="p-3" data-case-workspace>
               <CaseWorkspace
