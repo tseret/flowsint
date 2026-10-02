@@ -63,6 +63,7 @@ export const ToolbarButton = memo(function ToolbarButton({
       <TooltipTrigger asChild>
         <div>
           <Button
+            aria-label={typeof tooltip === 'string' ? tooltip : undefined}
             onClick={onClick}
             disabled={disabled}
             variant="ghost"
