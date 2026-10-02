@@ -146,3 +146,12 @@ Done:
 
 Next:
 - Build matching images, back up existing data, update only local application services and verify the new UI journeys. No team deployment is authorized yet.
+
+## 2026-10-02 — local runtime smoke and immediate-edit repair
+Done:
+- Matching images were built and applied to the existing stack after a verified PostgreSQL/cold-Neo4j backup. Live diagnostics: 72 matching API/worker connectors, matching frontend/API/worker revision, healthy dependencies and current migration head.
+- Browser checks confirmed saved graph views and persisted case evidence, assignment, resolved status, accepted review and actor history. Original graph counts stayed unchanged until the explicitly named verification entity was added.
+- Reproduced the first edit of an inserted entity conflicting because the response exposed version 0 while storage had version 1. Return the stored version and use canonical identities for browser-created entities. Full combined Python suites pass with regression coverage.
+
+Next:
+- Rebuild/apply these version fixes and repeat browser verification. Local normal commands use the repository's git-excluded Compose override; team deployment is pending user review.

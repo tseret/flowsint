@@ -59,6 +59,24 @@ class TestGraphServiceInit:
 
 
 class TestCreateNode:
+    def test_browser_node_uses_the_same_identity_as_enriched_entities(self):
+        from flowsint_core.core.graph import GraphSerializer
+
+        repository = MagicMock()
+        node = GraphNode(
+            id=None,
+            nodeLabel="Analyst label",
+            nodeType="domain",
+            nodeProperties={"domain": "example.com"},
+            nodeMetadata=NodeMetadata(),
+        )
+        GraphService("sketch-1", repository).create_node(node)
+        properties = repository.create_node.call_args.kwargs["node_obj"]
+        assert properties["nodeKey"] == GraphSerializer.canonical_key(
+            Domain(domain="example.com")
+        )
+        assert properties["nodeLabel"] == "Analyst label"
+
     def test_create_node_with_graph_node(self):
         """Test creating a node with injected mock repository."""
         mock_repo = MagicMock()

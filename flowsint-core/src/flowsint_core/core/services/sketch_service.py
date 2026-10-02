@@ -148,18 +148,22 @@ class SketchService(BaseService):
 
         try:
             graph_service = create_graph_service(
-                sketch_id=str(sketch_id), enable_batching=False
+                sketch_id=str(sketch_id),
+                enable_batching=False,
+                type_resolver=self._type_registry.build_type_resolver(user_id)
+                if self._type_registry
+                else None,
             )
             node_id = graph_service.create_node(node)
+            stored_nodes = graph_service.get_nodes_by_ids([node_id]) if node_id else []
         except Exception as e:
             print(e)
             raise DatabaseError(f"Database error: {str(e)}")
 
-        if not node_id:
+        if not stored_nodes:
             raise ValidationError("Node creation failed")
 
-        node.id = node_id
-        return {"status": "node added", "node": node}
+        return {"status": "node added", "node": stored_nodes[0]}
 
     def add_relationship(
         self,
