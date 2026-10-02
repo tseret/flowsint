@@ -979,3 +979,17 @@ def test_modat_failure_is_actionable_and_redacted(
     )
     assert result.status_code == expected
     assert "private-key" not in result.text
+
+
+def test_lookup_checks_version_of_query_snapshot_even_if_initial_node_read_is_older(
+    client, db_session, service_backend, monkeypatch
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    service_backend[0].query.return_value[0]["data"]["version"] = 4
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    result = client.post(
+        "/api/copilot/fingerprint", headers=headers, json=_service_request(sketch_id)
+    )
+    assert result.status_code == 409
+    lookup.assert_not_called()

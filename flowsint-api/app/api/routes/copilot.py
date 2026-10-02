@@ -464,9 +464,12 @@ def _service_context(
             422, "Service must have exactly one owning IP in this sketch"
         )
     try:
-        address = str(ip_address(rows[0].get("source_address")))
+        source_address = rows[0].get("source_address")
+        if not isinstance(source_address, str):
+            raise ValueError("Missing IP address")
+        address = str(ip_address(source_address))
         host = rows[0].get("data", {}).get("nodeProperties.host")
-        if host and str(ip_address(host)) != address:
+        if host and (not isinstance(host, str) or str(ip_address(host)) != address):
             raise ValueError("Host mismatch")
     except (ValueError, TypeError):
         raise HTTPException(
@@ -477,7 +480,10 @@ def _service_context(
         raise HTTPException(422, "Stored service endpoint is incomplete")
     service = cast(dict[str, Any], result["services"][0])
     service["host"] = address
-    service["service_version"] = nodes[0].version
+    stored_version = rows[0]["data"].get("version", 0)
+    if type(stored_version) is not int or stored_version < 0:
+        raise HTTPException(422, "Stored service version is invalid")
+    service["service_version"] = stored_version
     _add_recorded_queries(service)
     return service
 
