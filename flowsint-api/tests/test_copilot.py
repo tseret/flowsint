@@ -593,7 +593,10 @@ def test_collect_uses_all_ready_passive_providers_and_skips_missing_keys(
     assert {step["enricher"] for step in result["skipped"]} == {
         "ip_to_threatfox",
         "ip_to_ports_shodan",
-    }
+    } | (
+        {"ip_to_ports_modat"}
+        & {item["name"] for item in route.ENRICHER_REGISTRY.list()}
+    )
     assert result["plan"]["node_versions"] == {"ip-1": 1}
     for call in backend[2].call_args_list:
         assert call.kwargs["args"][1][0]["address"] == "192.0.2.1"
