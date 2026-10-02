@@ -8,6 +8,7 @@ from app.api.routes import (
     analysis,
     auth,
     chat,
+    copilot,
     custom_types,
     diagnostics,
     enricher_templates,
@@ -57,6 +58,7 @@ app.include_router(flows.router, prefix="/api/flows", tags=["flows"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(analysis.router, prefix="/api/analyses", tags=["analyses"])
 app.include_router(chat.router, prefix="/api/chats", tags=["chats"])
+app.include_router(copilot.router, prefix="/api/copilot", tags=["copilot"])
 app.include_router(scan.router, prefix="/api/scans", tags=["scans"])
 app.include_router(keys.router, prefix="/api/keys", tags=["keys"])
 app.include_router(diagnostics.router, prefix="/api/diagnostics", tags=["diagnostics"])
