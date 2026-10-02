@@ -208,3 +208,13 @@ Done:
 
 Next:
 - Complete personal ChatGPT sign-in and consent in Profile to verify account eligibility, the live model catalog, and successful inference. This local loopback flow is not the remote team sign-in flow; team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-02 — passive IP intelligence collection
+Done:
+- Added Gather IP intelligence for up to ten selected IPs. It runs all installed, credential-ready supported passive lookups and automatically summarizes terminal outcomes, without requiring the model to choose tools. Missing-key providers are shown as gaps and retained in draft findings. Original selected entities are the only execution inputs; related infrastructure remains evidence for human review rather than automatic follow-up requests.
+- Expanded planning to seven steps, covering indexed Shodan services, optional installed Modat ports, VirusTotal reputation and two pages of historical DNS, plus existing ThreatFox/root-domain actions. Server-owned credential requirements and fixed DNS limits cannot be overridden by generated plans. Collection checks model/subscription readiness and permissions before queuing provider usage.
+- Preserved indexed Shodan banner/HTML/favicon/TLS fingerprints, source references and observation timestamps. Evidence summaries include only relationship observations attributed to the selected authorized runs, alongside actual output records, provider errors and truncation indicators. Provider-observed open ports do not imply current reachability.
+- Feature verification: 783 Python tests and 41 frontend tests pass; four optional live Neo4j tests skipped. Full lint retains 129 inherited warnings; frontend typecheck retains 84 inherited errors with none in changed copilot files. The user's connected account uses explicitly selected GPT-5.6 Sol, medium; synthetic subscription inference previously succeeded.
+
+Next:
+- Root will complete combined-checkout checks, matching sequential production builds, and existing-stack verification before publishing to https://github.com/tseret/flowsint/pull/1. Browser automation remains unavailable. No test investigations or live intelligence-provider requests have been created for this change; team deployment remains pending approval.

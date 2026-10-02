@@ -3,20 +3,36 @@ title: "Investigation copilot"
 description: "Review passive enrichment plans for selected entities and summarize their evidence."
 ---
 
-Select up to ten entities in a sketch and choose **Investigate selected entities**
+Select up to ten IPs in a sketch and choose **Investigate selected entities**
 (the sparkle button in the graph toolbar). Enter an investigation question, then
-choose **Suggest a plan**.
+choose **Gather IP intelligence**. This collects existing records from every
+installed, credential-ready provider in the supported catalog, tracks the runs,
+and automatically generates an evidence-linked report for human review. A blank
+question uses a general IP intelligence question. Providers with missing keys
+are skipped and shown as collection gaps; other providers still run.
+
+The catalog includes Shodan's indexed ports/services and fingerprints, VirusTotal
+reputation and historical passive DNS, ThreatFox reports, and Modat indexed ports
+where installed. No live port scan or rescan is triggered. Observation dates are
+preserved when supplied, so indexed open ports do not imply current reachability.
+Related domains and fingerprints can support candidate infrastructure links for
+review; discovered entities are never automatically queried.
+
+**Suggest a plan** remains available for reviewing and editing a plan before
+execution, including mixed IP/domain selections.
 
 The copilot reads the selected entities, a bounded set of nearby relationships,
-and recent run summaries from that sketch. It proposes up to three passive steps.
+and recent run summaries from that sketch. It proposes up to seven passive steps.
 Review each step's entities, provider, reason, and credential prerequisites.
 Remove unnecessary steps before choosing **Run reviewed plan**.
 
-The initial supported actions are local root-domain normalization and ThreatFox
-domain/IP intelligence lookups. ThreatFox queries its provider database; these
-actions do not probe the selected targets. New results do not automatically
-become inputs to additional lookups. Each selected entity receives at most one
-ThreatFox request per reviewed step, and normalization makes no target requests.
+Plans also support local root-domain normalization and domain ThreatFox lookups.
+Each selected IP receives at most six provider requests across the full catalog:
+one each for ThreatFox, Shodan services, Modat ports and VirusTotal reputation,
+plus two pages of VirusTotal DNS history. Missing/uninstalled providers reduce
+that count. Normalization makes no external requests. Saved copilot DNS recipes
+retain the two-page limit. Provider quota failures and partial coverage remain
+visible in run evidence.
 
 ## Model configuration and evidence
 
@@ -82,4 +98,6 @@ selected entity after planning, generate a new plan before running it.
 The copilot has no arbitrary code, shell, Cypher, or URL execution tools. Provider
 and graph text is treated as evidence rather than instructions. Plans stay
 bounded to their reviewed selection; graph arrangement and defensive searches
-over imported telemetry are later capabilities.
+over imported telemetry are later capabilities. Final reports organize evidence
+by IP where attribution permits, separate observations from hypotheses, and
+retain collection gaps when saved as draft findings.

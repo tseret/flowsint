@@ -30,6 +30,7 @@ from flowsint_core.core.services import (
 )
 from flowsint_core.core.services.copilot_service import (
     PASSIVE_ENRICHERS,
+    PASSIVE_PARAMS,
     CopilotPlan,
     CopilotRequest,
     eligible_catalog,
@@ -86,7 +87,7 @@ class SavePlan(CopilotPlan):
 class SummaryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sketch_id: UUID
-    run_ids: list[UUID] = Field(min_length=1, max_length=3)
+    run_ids: list[UUID] = Field(min_length=1, max_length=7)
     question: str = Field(min_length=1, max_length=2000)
 
 
@@ -238,7 +239,7 @@ async def plan_investigation(
                         "reason": item["description"]
                         or "Compatible passive enrichment.",
                     }
-                    for item in candidates[:3]
+                    for item in candidates[:7]
                 ],
             },
             payload,
@@ -287,7 +288,7 @@ def run_plan(
                     str(plan.sketch_id),
                     str(current_user.id),
                 ],
-                kwargs={"params": {}},
+                kwargs={"params": PASSIVE_PARAMS.get(step.enricher, {})},
             )
         except Exception:
             if not runs:
@@ -303,6 +304,53 @@ def run_plan(
             {"id": task.id, "enricher": step.enricher, "node_ids": step.node_ids}
         )
     return {"runs": runs}
+
+
+@router.post("/collect")
+def collect_ip_intelligence(
+    payload: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Collect indexed records for the exact selected IPs, then summarize runs."""
+    _check_sketch(db, current_user, payload.sketch_id, write=True)
+    _, nodes, candidates = _selection(payload, db, current_user)
+    if any(node.nodeType.lower() != "ip" for node in nodes):
+        raise HTTPException(
+            422, "Select only IP entities for IP intelligence collection"
+        )
+    plan = validate_plan(
+        {
+            "analysis": "Collect existing provider records for the selected IPs. "
+            "The final report will distinguish observations, hypotheses and gaps. "
+            "Related entities require review before any further lookups.",
+            "steps": [
+                {
+                    "enricher": item["enricher"],
+                    "node_ids": item["node_ids"],
+                    "reason": item["description"]
+                    or "Read existing provider intelligence",
+                }
+                for item in candidates
+            ],
+        },
+        payload,
+        candidates,
+    )
+    skipped = [step for step in plan.steps if step.missing_keys]
+    plan.steps = [step for step in plan.steps if not step.missing_keys]
+    if not plan.steps:
+        missing = sorted({key for step in skipped for key in step.missing_keys})
+        raise HTTPException(
+            422,
+            "No IP intelligence providers are ready. Configure provider keys in Vault: "
+            + ", ".join(missing),
+        )
+    # Fail an unavailable subscription before incurring intelligence-provider usage.
+    _provider(db, current_user)
+    plan.node_versions = {str(node.id): node.version for node in nodes}
+    result = run_plan(plan, db, current_user)
+    return {"plan": plan, "skipped": skipped, **result}
 
 
 @router.post("/save")
@@ -338,7 +386,11 @@ def save_plan(
                     "id": enricher_id,
                     "type": "enricher",
                     "position": {"x": 300, "y": index * 160},
-                    "data": {**item, "type": "enricher", "params": {}},
+                    "data": {
+                        **item,
+                        "type": "enricher",
+                        "params": PASSIVE_PARAMS.get(step.enricher, {}),
+                    },
                 },
             ]
         )
@@ -394,6 +446,42 @@ async def summarize_plan(
         }
         for run_id in payload.run_ids
     ]
+    # Dated DNS/hostname observations live on relationships rather than output
+    # entities. Include only observations attributed to these authorized runs.
+    graph = create_graph_service(sketch_id=str(payload.sketch_id))
+    rows = graph.query(
+        """MATCH (source)-[r]->(target)
+        WHERE source.sketch_id = $sketch_id AND target.sketch_id = $sketch_id
+          AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+          AND r.deleted_at IS NULL
+          AND any(obs IN coalesce(r.observations, []) WHERE
+            any(run_id IN $run_ids WHERE obs CONTAINS run_id))
+        RETURN source.nodeLabel AS source, target.nodeLabel AS target,
+          type(r) AS relationship, r.observations AS observations
+        ORDER BY elementId(r) LIMIT 201""",
+        {
+            "sketch_id": str(payload.sketch_id),
+            "run_ids": [str(id) for id in payload.run_ids],
+        },
+    )
+    for item in evidence:
+        relationships = []
+        for row in rows[:200]:
+            observations = []
+            for raw in row.get("observations") or []:
+                try:
+                    observation = json.loads(raw) if isinstance(raw, str) else raw
+                except (ValueError, TypeError):
+                    continue
+                if (
+                    isinstance(observation, dict)
+                    and observation.get("scan_id") == item["run_id"]
+                ):
+                    observations.append(observation)
+            if observations:
+                relationships.append({**row, "observations": observations})
+        item["relationships"] = relationships
+        item["relationships_truncated"] = len(rows) > 200
     messages, truncated = summary_messages(payload.question, evidence)
     provider = await run_in_threadpool(_provider, db, current_user)
     if provider:

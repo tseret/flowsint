@@ -13,6 +13,25 @@ from flowsint_types.port import Port
 KEY = "SHODAN_API_KEY"
 
 
+def indexed_fingerprints(item: Dict[str, Any]) -> Dict[str, str]:
+    """Preserve only fingerprint fields already returned by the provider."""
+    result = {}
+    for label, path in {
+        "banner_hash": ("hash",),
+        "html_hash": ("http", "html_hash"),
+        "favicon_hash": ("http", "favicon", "hash"),
+        "tls_sha256": ("ssl", "cert", "fingerprint", "sha256"),
+        "jarm": ("ssl", "jarm"),
+        "ja3s": ("ssl", "ja3s"),
+    }.items():
+        value: Any = item
+        for part in path:
+            value = value.get(part) if isinstance(value, dict) else None
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            result[label] = str(value)[:128]
+    return result
+
+
 @flowsint_enricher
 class IpToPortsShodanEnricher(Enricher):
     """[Shodan] Get open ports, services and hostnames for an IP address from Shodan's index (no active scan)."""
@@ -96,6 +115,10 @@ class IpToPortsShodanEnricher(Enricher):
                         state="open",
                         service=service or None,
                         banner=(item.get("data") or "")[:500] or None,
+                        provider="Shodan",
+                        observed_at=str(item.get("timestamp") or "")[:100] or None,
+                        source_ref=f"https://www.shodan.io/host/{ip.address}",
+                        fingerprints=indexed_fingerprints(item),
                     )
                     results.append(port)
                     self._ports.append((ip, port))
@@ -127,14 +150,28 @@ class IpToPortsShodanEnricher(Enricher):
         for ip, port in self._ports:
             self.create_node(ip)
             self.create_node(port)
-            self.create_relationship(ip, port, "HAS_PORT")
+            evidence = port.model_extra or {}
+            self.create_relationship(
+                ip,
+                port,
+                "HAS_PORT",
+                provider="Shodan",
+                observed_at=evidence.get("observed_at"),
+                source_ref=evidence.get("source_ref"),
+            )
             self.log_graph_message(
                 f"Port {port.number}/{port.protocol} on {ip.address}"
             )
         for ip, domain in self._domains:
             self.create_node(ip)
             self.create_node(domain)
-            self.create_relationship(ip, domain, "REVERSE_RESOLVES_TO")
+            self.create_relationship(
+                ip,
+                domain,
+                "REVERSE_RESOLVES_TO",
+                provider="Shodan",
+                source_ref=f"https://www.shodan.io/host/{ip.address}",
+            )
             self.log_graph_message(f"Hostname {domain.domain} for {ip.address}")
         return results
 

@@ -5,6 +5,7 @@ import {
   matchesPlan,
   pollCopilotRun,
   externalCallCount,
+  providerName,
   type CopilotPlan
 } from './copilot-service'
 import { fetchWithAuth } from './api'
@@ -24,6 +25,37 @@ const plan: CopilotPlan = {
 }
 
 describe('reviewed copilot plan', () => {
+  it('sends the exact selected IP scope and question to collection', async () => {
+    const request = {
+      sketch_id: 'sketch',
+      node_ids: ['ip-1', 'ip-2'],
+      question: 'Check passive IP intelligence'
+    }
+    await copilotService.collect(request)
+    expect(fetchWithAuth).toHaveBeenLastCalledWith('/api/copilot/collect', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    })
+  })
+  it('budgets all passive IP providers including bounded VirusTotal pagination', () => {
+    const names = [
+      'ip_to_ports_shodan',
+      'ip_to_ports_modat',
+      'ip_to_reputation_virustotal',
+      'ip_to_domains_virustotal',
+      'ip_to_threatfox'
+    ]
+    expect(
+      externalCallCount(
+        names.map((enricher) => ({ enricher, node_ids: ['a', 'b'], reason: '', missing_keys: [] }))
+      )
+    ).toBe(12)
+    expect(providerName('ip_to_ports_shodan')).toBe('Shodan')
+    expect(providerName('ip_to_ports_modat')).toBe('Modat')
+    expect(providerName('ip_to_domains_virustotal')).toBe('VirusTotal')
+    expect(providerName('domain_to_root_domain')).toBe('Local processing')
+    expect(providerName('unknown')).toBe('Unknown provider')
+  })
   it('keeps queued tasks pending until workers insert their scan rows', async () => {
     vi.mocked(scanService.getById).mockRejectedValueOnce(
       Object.assign(new Error('Not found'), { status: 404 })
