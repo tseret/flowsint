@@ -1,5 +1,8 @@
+import json
 import os
 import re
+from datetime import datetime, timezone
+from ipaddress import ip_address
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -171,10 +174,17 @@ class IpToPortsModatEnricher(Enricher):
                         service=name
                         if isinstance(name, str) and name != "unknown"
                         else None,
+                        banner=service.get("banner", "")[:4000]
+                        if isinstance(service.get("banner"), str)
+                        else None,
                         provider="Modat",
+                        retrieved_at=datetime.now(timezone.utc).isoformat(),
                         source_ref=HOST_URL.format(ip=ip.address),
                         observed_at=str(
-                            service.get("observed_at") or service.get("timestamp") or ""
+                            service.get("scanned_at")
+                            or service.get("observed_at")
+                            or service.get("timestamp")
+                            or ""
                         )[:100]
                         or None,
                         fingerprints={
@@ -213,3 +223,125 @@ class IpToPortsModatEnricher(Enricher):
 
 InputType = IpToPortsModatEnricher.InputType
 OutputType = IpToPortsModatEnricher.OutputType
+
+
+def recorded_fingerprint_query(service: dict[str, Any], field: str) -> str | None:
+    """Build one service-index query from a validated, recorded fingerprint."""
+    port = service.get("port")
+    transport = str(service.get("transport", "")).lower()
+    protocol = str(service.get("service", "")).lower()
+    if (
+        service.get("provider") != "Modat"
+        or field not in FIELDS
+        or type(port) is not int
+        or not 1 <= port <= 65535
+        or transport not in {"tcp", "udp"}
+        or not re.fullmatch(r"[a-z0-9_-]{1,40}", protocol)
+    ):
+        return None
+    value = service.get("fingerprints", {}).get(field)
+    if not isinstance(value, (str, int)) or isinstance(value, bool):
+        return None
+    if field.endswith("_mmh3"):
+        if not re.fullmatch(r"-?\d{1,10}", str(value)):
+            return None
+        value = int(value)
+        if not -(2**31) <= value < 2**31:
+            return None
+    record: dict[str, Any] = {}
+    current = record
+    for part in FIELDS[field][:-1]:
+        current[part] = {}
+        current = current[part]
+    current[FIELDS[field][-1]] = value
+    normalized = _fingerprint(record, field)
+    if not normalized:
+        return None
+    literal = normalized if field.endswith("_mmh3") else json.dumps(normalized)
+    return f"port={port} protocol={json.dumps(protocol)} transport={json.dumps(transport)} {field}={literal}"
+
+
+def lookup_recorded_fingerprint(
+    service: dict[str, Any], field: str, key: str
+) -> dict[str, Any]:
+    """One user-triggered indexed lookup; never query matches or write graph nodes."""
+    query = recorded_fingerprint_query(service, field)
+    if query is None:
+        raise ValueError("Unsupported recorded service fingerprint")
+    response = requests.post(
+        "https://api.magnify.modat.io/service/search/v1",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "User-Agent": "Flowsint-Modat-Connector",
+        },
+        json={"query": query, "page": 1, "page_size": 50},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("page"), list):
+        raise ValueError("Invalid provider response")
+    records = payload["page"]
+    total = payload.get("total_records")
+    total = total if type(total) is int and total >= 0 else None
+    pages = payload.get("total_pages")
+    truncated = (
+        len(records) > 50
+        or (type(pages) is int and pages > 1)
+        or (total is not None and total > 50)
+    )
+    matches: dict[str, dict[str, Any]] = {}
+    for record in records[:50]:
+        if not isinstance(record, dict) or not isinstance(record.get("service"), dict):
+            truncated = True
+            continue
+        observed = record["service"]
+        try:
+            address = str(ip_address(record.get("ip")))
+        except (ValueError, TypeError):
+            truncated = True
+            continue
+        if address == service.get("host"):
+            continue
+        expected = service["fingerprints"][field]
+        if (
+            observed.get("port") != service["port"]
+            or observed.get("transport") != str(service["transport"]).lower()
+            or observed.get("protocol") != str(service["service"]).lower()
+            or _fingerprint(observed, field).lower()
+            != str(expected).replace(":", "").lower()
+        ):
+            truncated = True
+            continue
+        fingerprints = {
+            name: value for name in FIELDS if (value := _fingerprint(observed, name))
+        }
+        common = [
+            name
+            for name, value in fingerprints.items()
+            if value.replace(":", "").lower()
+            == str(service["fingerprints"].get(name, "")).replace(":", "").lower()
+        ]
+        banner = observed.get("banner")
+        truncated |= isinstance(banner, str) and len(banner) > 4000
+        matches[address] = {
+            "ip": address,
+            "port": observed["port"],
+            "transport": observed["transport"],
+            "protocol": observed["protocol"],
+            "observed_at": str(
+                observed.get("scanned_at") or observed.get("observed_at") or ""
+            )[:100],
+            "banner": banner[:4000] if isinstance(banner, str) else "",
+            "fingerprints": fingerprints,
+            "matching_fingerprints": common,
+            "source_ref": HOST_URL.format(ip=address),
+        }
+    return {
+        "query": query,
+        "service": service,
+        "matches": list(matches.values()),
+        "truncated": truncated,
+        "total_records": total,
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+    }

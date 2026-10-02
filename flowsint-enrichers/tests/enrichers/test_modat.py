@@ -212,3 +212,135 @@ async def test_quota_failure_is_reported_as_collection_gap(monkeypatch):
     monkeypatch.setattr(enricher, "report_issue", issue)
     assert await enricher.scan([Ip(address="192.0.2.1")]) == []
     issue.assert_called_once_with("quota_exceeded", "Modat returned HTTP 429.")
+
+
+@pytest.mark.asyncio
+async def test_provider_scanned_date_and_readable_banner_are_retained(monkeypatch):
+    service = {
+        "transport": "tcp",
+        "ports": [22],
+        "protocol": "ssh",
+        "scanned_at": "2026-10-02T08:00:00Z",
+        "timestamp": "older",
+        "banner": "SSH-2.0-OpenSSH_9.6",
+        "ssh": {"hassh": "ab" * 16},
+    }
+    enricher, _ = _enricher(
+        monkeypatch, [_Response(payload={"data": {"services": [service]}})]
+    )
+    port = (await enricher.scan([Ip(address="192.0.2.1")]))[0]
+    assert port.banner == service["banner"]
+    assert port.model_extra["observed_at"] == service["scanned_at"]
+    assert port.model_extra["retrieved_at"]
+
+
+def _recorded_service():
+    return {
+        "host": "192.0.2.1",
+        "port": 22,
+        "transport": "TCP",
+        "service": "ssh",
+        "provider": "Modat",
+        "fingerprints": {"ssh.hassh": "ab" * 16},
+    }
+
+
+def test_single_ssh_hash_builds_same_endpoint_query_without_three_family_gate():
+    from flowsint_enrichers.ip.to_ports_modat import recorded_fingerprint_query
+
+    assert recorded_fingerprint_query(_recorded_service(), "ssh.hassh") == (
+        'port=22 protocol="ssh" transport="tcp" ssh.hassh="' + "ab" * 16 + '"'
+    )
+    for override in (
+        {"service": 'ssh" OR port=1'},
+        {"port": True},
+        {"transport": "icmp"},
+        {"provider": "Shodan"},
+        {"fingerprints": {"ssh.hassh": "bad"}},
+    ):
+        assert (
+            recorded_fingerprint_query({**_recorded_service(), **override}, "ssh.hassh")
+            is None
+        )
+    assert recorded_fingerprint_query(_recorded_service(), "arbitrary") is None
+
+
+def test_indexed_lookup_makes_one_request_returns_exact_unverified_matches(monkeypatch):
+    from flowsint_enrichers.ip.to_ports_modat import lookup_recorded_fingerprint
+
+    response = Mock()
+    rows = [
+        {
+            "ip": f"192.0.2.{n}",
+            "service": {
+                "port": 22,
+                "protocol": "ssh",
+                "transport": "tcp",
+                "scanned_at": "2026-10-01",
+                "ssh": {"hassh": "ab" * 16},
+                "banner": "SSH-2.0-Test",
+            },
+        }
+        for n in range(1, 5)
+    ]
+    rows += [
+        {"ip": "192.0.2.2", "service": rows[1]["service"]},
+        {"ip": "192.0.2.9", "service": {**rows[1]["service"], "port": 443}},
+        {
+            "ip": "192.0.2.8",
+            "service": {**rows[1]["service"], "ssh": {"hassh": "cd" * 16}},
+        },
+        {"ip": "192.0.2.7", "service": {**rows[1]["service"], "transport": "udp"}},
+        {"ip": "192.0.2.6", "service": {**rows[1]["service"], "protocol": "http"}},
+        {"ip": "not-an-ip", "service": rows[1]["service"]},
+        None,
+    ]
+    response.json.return_value = {
+        "page": rows,
+        "total_records": len(rows),
+        "total_pages": 1,
+    }
+    post = Mock(return_value=response)
+    monkeypatch.setattr(f"{MOD}.requests.post", post)
+    result = lookup_recorded_fingerprint(_recorded_service(), "ssh.hassh", "test-key")
+    post.assert_called_once()
+    assert post.call_args.args[0] == "https://api.magnify.modat.io/service/search/v1"
+    assert post.call_args.kwargs["json"] == {
+        "query": result["query"],
+        "page": 1,
+        "page_size": 50,
+    }
+    assert {item["ip"] for item in result["matches"]} == {
+        "192.0.2.2",
+        "192.0.2.3",
+        "192.0.2.4",
+    }
+    assert result["matches"][0]["matching_fingerprints"] == ["ssh.hassh"]
+    assert result["matches"][0]["observed_at"] == "2026-10-01"
+    assert result["matches"][0]["banner"] == "SSH-2.0-Test"
+    assert result["truncated"]
+    assert "test-key" not in str(result)
+
+
+def test_provider_pagination_is_flagged_without_automatic_second_request(monkeypatch):
+    from flowsint_enrichers.ip.to_ports_modat import lookup_recorded_fingerprint
+
+    response = Mock()
+    response.json.return_value = {"page": [], "total_records": 80, "total_pages": 2}
+    post = Mock(return_value=response)
+    monkeypatch.setattr(f"{MOD}.requests.post", post)
+    assert lookup_recorded_fingerprint(_recorded_service(), "ssh.hassh", "test-key")[
+        "truncated"
+    ]
+    post.assert_called_once()
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"page": None}])
+def test_lookup_rejects_unusable_provider_payload(monkeypatch, payload):
+    from flowsint_enrichers.ip.to_ports_modat import lookup_recorded_fingerprint
+
+    response = Mock()
+    response.json.return_value = payload
+    monkeypatch.setattr(f"{MOD}.requests.post", Mock(return_value=response))
+    with pytest.raises(ValueError):
+        lookup_recorded_fingerprint(_recorded_service(), "ssh.hassh", "test-key")
