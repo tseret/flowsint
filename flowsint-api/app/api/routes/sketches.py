@@ -142,7 +142,7 @@ def list_sketches(
     return service.list_sketches(current_user.id)
 
 
-@router.get("/{sketch_id}")
+@router.get("/{sketch_id}", response_model=SketchRead)
 def get_sketch_by_id(
     sketch_id: UUID,
     db: Session = Depends(get_db),
