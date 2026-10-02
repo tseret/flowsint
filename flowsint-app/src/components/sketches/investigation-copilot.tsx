@@ -33,6 +33,7 @@ import {
   SheetDescription
 } from '@/components/ui/sheet'
 import { ToolbarButton } from './toolbar'
+import { CopilotCandidates } from './copilot-candidates'
 
 export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const { canEdit } = usePermissions()
@@ -56,6 +57,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const [findingSaved, setFindingSaved] = useState(false)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [skipped, setSkipped] = useState<CopilotStep[]>([])
+  const [planIPs, setPlanIPs] = useState(false)
   const [pollUntil, setPollUntil] = useState(0)
   const summaryRequested = useRef(false)
   const ids = selected.map((node) => String(node.id))
@@ -116,6 +118,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
     setFlowId(null)
     setFindingSaved(false)
     setSkipped([])
+    setPlanIPs(ipsOnly)
     setLabels(Object.fromEntries(selected.map((node) => [String(node.id), node.nodeLabel])))
     summaryRequested.current = false
     try {
@@ -142,6 +145,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
     setFlowId(null)
     setFindingSaved(false)
     setSkipped([])
+    setPlanIPs(true)
     setLabels(Object.fromEntries(selected.map((node) => [String(node.id), node.nodeLabel])))
     summaryRequested.current = false
     try {
@@ -310,6 +314,17 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
               <p role="alert" className="text-sm text-destructive">
                 {connection.error.message}
               </p>
+            )}
+            {(ipsOnly || (runs.length > 0 && plan && planIPs)) && (
+              <CopilotCandidates
+                key={JSON.stringify([
+                  sketchId,
+                  [...(runs.length > 0 && plan && planIPs ? plan.node_ids : ids)].sort()
+                ])}
+                sketchId={sketchId}
+                nodeIds={runs.length > 0 && plan && planIPs ? plan.node_ids : ids}
+                question={question}
+              />
             )}
             {plan && (
               <>

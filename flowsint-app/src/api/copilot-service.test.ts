@@ -25,6 +25,18 @@ const plan: CopilotPlan = {
 }
 
 describe('reviewed copilot plan', () => {
+  it('requests existing candidates only for the specified sketch and entities', async () => {
+    const request = {
+      sketch_id: 'sketch',
+      node_ids: ['ip-1'],
+      question: 'Review existing evidence'
+    }
+    await copilotService.candidates(request)
+    expect(fetchWithAuth).toHaveBeenLastCalledWith('/api/copilot/candidates', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    })
+  })
   it('sends the exact selected IP scope and question to collection', async () => {
     const request = {
       sketch_id: 'sketch',

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from flowsint_core.core.llm.types import MessageRole
 from flowsint_core.core.services.copilot_service import (
     CopilotRequest,
+    candidate_review_evidence,
     eligible_catalog,
     planning_messages,
     summary_messages,
@@ -88,6 +89,89 @@ def test_ip_catalog_adds_indexed_sources_with_server_required_credentials():
         [],
     ]
     assert all(item["node_ids"] == ["ip"] for item in catalog)
+
+
+def _candidate_row(**changes):
+    return {
+        "source_id": "seed",
+        "source_label": "192.0.2.1",
+        "node_id": "peer",
+        "label": "192.0.2.2",
+        "candidate_type": "ip",
+        "evidence_type": "phrase",
+        "evidence_id": "evidence",
+        "evidence_label": "Imported Modat fingerprint",
+        "relationships": ["HAS_MODAT_PIVOT", "MATCHES_MODAT_PIVOT"],
+        "observations": [
+            json.dumps(
+                {
+                    "scan_id": "imported-run",
+                    "provider": "Modat",
+                    "observed_at": "2026-09-30",
+                    "api_key": "private-value",
+                }
+            )
+        ],
+        **changes,
+    }
+
+
+def test_candidate_review_preserves_paths_and_redacts_credentials():
+    result = candidate_review_evidence(
+        [_candidate_row(), _candidate_row(evidence_id="second")], {"seed"}
+    )
+    assert len(result["candidates"]) == 1
+    assert len(result["candidates"][0]["evidence"]) == 2
+    observation = result["candidates"][0]["evidence"][0]["observations"][0]
+    assert observation["observed_at"] == "2026-09-30"
+    assert observation["scan_id"] == "imported-run"
+    assert "private-value" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_id": "unselected"},
+        {"node_id": "seed"},
+        {"candidate_type": "domain"},
+        {"evidence_type": "asn"},
+        {"relationships": ["HAS_PORT", "HAS_PORT"]},
+        {"relationships": [{}, "HAS_MODAT_PIVOT"]},
+    ],
+)
+def test_candidate_review_excludes_out_of_scope_and_unsupported_links(changes):
+    assert (
+        candidate_review_evidence([_candidate_row(**changes)], {"seed"})["candidates"]
+        == []
+    )
+
+
+def test_candidate_review_caps_candidates_and_paths():
+    rows = [_candidate_row(node_id=f"peer-{index}") for index in range(25)]
+    result = candidate_review_evidence(rows, {"seed"})
+    assert len(result["candidates"]) == 20 and result["truncated"]
+    result = candidate_review_evidence(
+        [_candidate_row(evidence_id=str(index)) for index in range(8)], {"seed"}
+    )
+    assert len(result["candidates"][0]["evidence"]) == 5 and result["truncated"]
+
+
+def test_candidate_review_evidence_fits_case_finding_storage():
+    row = _candidate_row(
+        observations=[json.dumps({f"field-{index}": "x" * 1000 for index in range(30)})]
+    )
+    result = candidate_review_evidence([row] * 5, {"seed"})
+    candidate = result["candidates"][0]
+    assert (
+        len(
+            json.dumps(
+                {"candidate_id": candidate["node_id"], "paths": candidate["evidence"]}
+            )
+        )
+        < 20000
+    )
+    assert result["truncated"]
+    assert candidate["evidence"][0]["evidence_id"] == "evidence"
 
 
 def test_catalog_available_key_names_clear_prerequisite() -> None:
