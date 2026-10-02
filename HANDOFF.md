@@ -153,6 +153,8 @@ Done:
 - Browser checks confirmed saved graph views and persisted case evidence, assignment, resolved status, accepted review and actor history. Original graph counts stayed unchanged until the explicitly named verification entity was added.
 - Reproduced the first edit of an inserted entity conflicting because the response exposed version 0 while storage had version 1. Return the stored version and use canonical identities for browser-created entities. Full combined Python suites pass with regression coverage.
 - Repeated live checks exposed missing IDs in single-node reads and a discarded version in the optimistic frontend replacement. Fixed both shared paths for dialog, paste and quick-add creation. Combined suite: 708 Python tests; frontend 24 tests/build and lint passed. No new full-frontend typecheck diagnostic signatures.
+- Final images v1.2.12-57-g7d8611cfb274 are live on the existing local stack. The first edit of a newly created entity now returns 200/version 2 and survives reload. Two-tab testing confirmed a stale edit returns 409 with draft retained, and Load latest restores the saved version. Analysis title/body saves persist. UI diagnostics confirm matching builds, 72 matching connectors, healthy dependencies and current migrations.
+- The checkout is retained at .local/workspace-review in the main repository; its local-only Compose override pins these images and preserves localhost-only exposure. No extra app/database services were started. Backups are under backups/workspace-20261002T050710Z in the main repository.
 
 Next:
-- Rebuild/apply these version fixes and repeat browser verification. Local normal commands use the repository's git-excluded Compose override; team deployment is pending user review.
+- Continue local review on localhost:5173. Team deployment requires the user's approval of the local result; full recovery rehearsal and fresh provider-response checks remain unverified.
