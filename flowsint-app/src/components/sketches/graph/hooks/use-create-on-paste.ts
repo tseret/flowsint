@@ -1,6 +1,6 @@
 import { usePasteListener } from '@/hooks/use-paste-listener'
 import { useGraphStore } from '@/stores/graph-store'
-import { type GraphNode, NodeProperties } from '@/types/graph'
+import { type GraphNode } from '@/types/graph'
 import { v4 as uuidv4 } from 'uuid'
 import { toast } from 'sonner'
 import { useCallback } from 'react'
@@ -81,7 +81,7 @@ const createNode = async (
   node: GraphNode,
   sketchId: string,
   addNode: (node: GraphNode) => void,
-  replaceNode: (oldId: string, newId: string, nodeProperties: NodeProperties) => void
+  replaceNode: (oldId: string, savedNode: GraphNode) => void
 ) => {
   try {
     addNode(node)
@@ -89,7 +89,7 @@ const createNode = async (
     const newNodeResponse = await sketchService.addNode(sketchId, JSON.stringify(node))
     const newNode: GraphNode = newNodeResponse.node
     if (newNode) {
-      replaceNode(node.id, newNode.id, newNode.nodeProperties)
+      replaceNode(node.id, newNode)
     }
   } catch {
     toast.error('Could not create node.')

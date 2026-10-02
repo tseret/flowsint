@@ -785,7 +785,7 @@ class Neo4jGraphRepository:
         UNWIND $node_ids AS node_id
         MATCH (n)
         WHERE elementId(n) = node_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL
-        RETURN properties(n) as data
+        RETURN elementId(n) AS id, properties(n) as data
         """
 
         result = self._connection.query(

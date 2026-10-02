@@ -673,6 +673,7 @@ class TestGetNodesByIds:
         result = repo.get_nodes_by_ids(["id-1", "id-2"], sketch_id="sketch-1")
 
         assert len(result) == 2
+        assert "elementId(n) AS id" in mock_connection.query.call_args.args[0]
 
     def test_get_nodes_by_ids_no_connection(self):
         repo = repo_without_connection()
