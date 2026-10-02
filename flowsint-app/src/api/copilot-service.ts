@@ -30,6 +30,18 @@ export type CopilotCandidate = {
     observations: unknown[]
   }[]
 }
+export type CopilotServiceEvidence = {
+  source_id: string
+  source_label: string
+  service_id: string
+  port: number | null
+  transport: string
+  service: string
+  provider: string
+  observed_at: string
+  source_ref: string
+  fingerprints: Record<string, unknown>
+}
 export type CopilotSummary = {
   summary: string
   evidence: {
@@ -51,6 +63,8 @@ export const copilotService = {
   }): Promise<{
     candidates: CopilotCandidate[]
     truncated: boolean
+    services: CopilotServiceEvidence[]
+    services_truncated: boolean
   }> => fetchWithAuth('/api/copilot/candidates', { method: 'POST', body: JSON.stringify(body) }),
   collect: (body: {
     sketch_id: string

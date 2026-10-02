@@ -390,3 +390,35 @@ def test_summary_evidence_citations_and_failure_limits() -> None:
     assert "secret-value" not in messages[1].content
     assert json.loads(messages[1].content)["evidence"]["runs"][0]["id"] == "run-1"
     assert truncated
+
+
+def test_recorded_ssh_fingerprint_is_visible_without_existing_peer_paths():
+    from flowsint_core.core.services.copilot_service import service_fingerprint_evidence
+
+    row = {
+        "source_id": "selected",
+        "source_label": "192.0.2.1",
+        "service_id": "ssh-service",
+        "data": {
+            "nodeProperties.number": 22,
+            "nodeProperties.protocol": "TCP",
+            "nodeProperties.service": "ssh",
+            "nodeProperties.provider": "Modat",
+            "nodeProperties.observed_at": "2026-10-02",
+            "nodeProperties.fingerprints.ssh.hassh": "ab" * 16,
+            "nodeProperties.fingerprints.api_key": "private",
+        },
+    }
+    result = service_fingerprint_evidence([row], {"selected"})
+    assert result["services"][0]["fingerprints"]["ssh.hassh"] == "ab" * 16
+    assert result["services"][0]["port"] == 22
+    assert result["services"][0]["observed_at"] == "2026-10-02"
+    assert "private" not in json.dumps(result)
+    assert service_fingerprint_evidence([row], {"other"})["services"] == []
+    assert service_fingerprint_evidence([row] * 51, {"selected"})["services_truncated"]
+    assert (
+        service_fingerprint_evidence(
+            [{"source_id": "selected", "data": {}}], {"selected"}
+        )["services"]
+        == []
+    )

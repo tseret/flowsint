@@ -136,7 +136,7 @@ async def test_postprocess_links_each_port_to_source_ip(monkeypatch):
     monkeypatch.setattr(
         enricher,
         "create_relationship",
-        lambda src, dst, kind: edges.append(
+        lambda src, dst, kind, **evidence: edges.append(
             (src.address, dst.number, dst.protocol, kind)
         ),
     )
@@ -148,3 +148,67 @@ async def test_postprocess_links_each_port_to_source_ip(monkeypatch):
         ("8.8.8.8", 53, "UDP", "HAS_PORT"),
         ("1.1.1.1", 443, "TCP", "HAS_PORT"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ssh_only_service_retains_hassh_and_observation_provenance(monkeypatch):
+    service = {
+        "transport": "tcp",
+        "ports": [22],
+        "protocol": "ssh",
+        "timestamp": "2026-10-02T09:00:00Z",
+        "ssh": {"hassh": "AB" * 16, "password": "private"},
+        "banner_sha256": "cd" * 32,
+    }
+    enricher, calls = _enricher(
+        monkeypatch, [_Response(payload={"data": {"services": [service]}})]
+    )
+    results = await enricher.scan([Ip(address="192.0.2.1")])
+    assert len(calls) == 1
+    assert results[0].model_extra["fingerprints"] == {
+        "ssh.hassh": "ab" * 16,
+        "banner_sha256": "cd" * 32,
+    }
+    assert results[0].model_extra["observed_at"] == service["timestamp"]
+    assert results[0].model_extra["provider"] == "Modat"
+    assert "private" not in results[0].model_dump_json()
+    enricher._graph_service = object()
+    monkeypatch.setattr(enricher, "create_node", lambda node: None)
+    monkeypatch.setattr(enricher, "log_graph_message", lambda message: None)
+    relationship = Mock()
+    monkeypatch.setattr(enricher, "create_relationship", relationship)
+    enricher.postprocess(results)
+    assert relationship.call_args.kwargs == {
+        "provider": "Modat",
+        "observed_at": service["timestamp"],
+        "source_ref": "https://api.magnify.modat.io/host/192.0.2.1/v1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_invalid_hashes_are_not_recorded_and_dates_are_not_invented(monkeypatch):
+    services = [
+        None,
+        {
+            "transport": "tcp",
+            "ports": [22],
+            "protocol": "ssh",
+            "ssh": {"hassh": "invalid"},
+            "tls": {"jarm": {"nested": "value"}},
+        },
+    ]
+    enricher, _ = _enricher(
+        monkeypatch, [_Response(payload={"data": {"services": services}})]
+    )
+    results = await enricher.scan([Ip(address="192.0.2.1")])
+    assert results[0].model_extra["fingerprints"] == {}
+    assert results[0].model_extra["observed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_quota_failure_is_reported_as_collection_gap(monkeypatch):
+    enricher, _ = _enricher(monkeypatch, [_Response(429)])
+    issue = Mock()
+    monkeypatch.setattr(enricher, "report_issue", issue)
+    assert await enricher.scan([Ip(address="192.0.2.1")]) == []
+    issue.assert_called_once_with("quota_exceeded", "Modat returned HTTP 429.")

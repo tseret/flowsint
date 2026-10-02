@@ -38,7 +38,14 @@ visible in run evidence.
 
 With IPs selected, choose **Review related IP evidence** in the copilot. It reads
 existing or imported Modat pivot paths and shared historical DNS paths in the
-current sketch. Each candidate includes its source IP, supporting graph path and
+current sketch. Recorded service fingerprint leads are shown separately even
+when there are no related-IP paths. Modat port collection retains returned SSH
+HASSH, banner, HTTP and TLS fingerprints, provider source and observation dates
+when supplied. Older Modat port records need a passive service refresh to recover
+previously discarded metadata. Port collection does not search those fingerprints
+for other hosts; the panel labels them as unqueried leads for analyst review.
+
+Each candidate includes its source IP, supporting graph path and
 recorded observations. Shared hosting or ports alone do not establish an association.
 
 Record an association as pending, accepted or rejected. Decisions are saved as
