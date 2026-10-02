@@ -131,7 +131,9 @@ Done:
 - Documented workspace use and protected PostgreSQL/Neo4j/vault backup and recovery. Recorded the user's runtime preference in local AGENTS.md: foreground checks are allowed; no additional app/database services or deployment.
 - Verification: 674 Python tests passed (58 types, 462 core, 128 enrichers, 26 API); four opt-in Neo4j tests skipped in the ordinary suite. Three live Neo4j regression tests and the complete empty-PostgreSQL migration chain passed before temporary services were removed. Final focused task checks: 18 passed. Frontend: 23 tests and production build passed. Strict mypy passed all 140 changed Python files; full lint passed (129 existing frontend warnings). Full frontend typecheck still reports 84 inherited errors, down from 88, with no new diagnostic signatures.
 - Existing localhost:5173 case loaded without console errors. The new implementation has not been deployed there. Temporary verification services were stopped and removed; the existing stack is unchanged.
+- Matching API/frontend images built successfully during verification. The final-commit rebuild stalled while exporting API layers/building frontend; Docker's read-only status query also stopped responding. Only this run's build/status commands were cancelled; Docker and existing services were not restarted. Final-revision images remain unverified.
 
 Next:
 - Review the draft PR and explicitly authorize deployment before migrating/replacing the running stack. Verify the new UI journeys after deployment.
+- Retry `make build-local` when Docker responds normally; do not start extra services for verification.
 - Perform the documented backup/restore rehearsal against separate volumes when additional database services are authorized. Live provider mapping/quota checks remain dependent on provider access; no fresh provider calls were made for this change.
