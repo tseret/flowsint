@@ -1,0 +1,24 @@
+# Use with docker-compose.prod.yml only. Do not apply source-file local overrides.
+services:
+  api:
+    image: flowsint-api:${FLOWSINT_BUILD_REVISION:?Set FLOWSINT_BUILD_REVISION to the git revision}
+    build:
+      context: .
+      dockerfile: flowsint-api/Dockerfile
+      target: production
+      args:
+        BUILD_REVISION: ${FLOWSINT_BUILD_REVISION}
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
+  celery:
+    image: flowsint-api:${FLOWSINT_BUILD_REVISION:?Set FLOWSINT_BUILD_REVISION to the git revision}
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
+  app:
+    image: flowsint-app:${FLOWSINT_BUILD_REVISION:?Set FLOWSINT_BUILD_REVISION to the git revision}
+    build:
+      context: .
+      dockerfile: flowsint-app/Dockerfile
+      target: production
+      args:
+        BUILD_REVISION: ${FLOWSINT_BUILD_REVISION}

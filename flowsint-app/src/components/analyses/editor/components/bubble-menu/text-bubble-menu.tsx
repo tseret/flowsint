@@ -1,6 +1,6 @@
 import * as React from 'react'
 import type { Editor } from '@tiptap/react'
-import { BubbleMenu } from '@tiptap/react/menus'
+import { BubbleMenu } from '@tiptap/react'
 import {
   Bold,
   Italic,
@@ -109,9 +109,9 @@ export const TextBubbleMenu: React.FC<TextBubbleMenuProps> = ({ editor }) => {
       editor={editor}
       pluginKey="textBubbleMenu"
       shouldShow={shouldShow}
-      options={{
+      tippyOptions={{
         placement: 'top',
-        offset: 8
+        offset: [0, 8]
       }}
     >
       <div

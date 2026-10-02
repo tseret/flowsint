@@ -3,7 +3,7 @@ Investigation service for managing investigations and user roles.
 """
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from ..repositories import (
 )
 from ..types import Role
 from .base import BaseService
+from .collaboration_service import CollaborationService
 from .exceptions import (
     ConflictError,
     DatabaseError,
@@ -38,8 +39,8 @@ class InvestigationService(BaseService):
         sketch_repo: SketchRepository,
         analysis_repo: AnalysisRepository,
         profile_repo: ProfileRepository,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(db, **kwargs)
         self._investigation_repo = investigation_repo
         self._sketch_repo = sketch_repo
@@ -110,6 +111,13 @@ class InvestigationService(BaseService):
         investigation.description = description
         investigation.status = status
         investigation.last_updated_at = datetime.now(timezone.utc)
+        CollaborationService(self.db).record(
+            investigation_id,
+            user_id,
+            "investigation updated",
+            investigation_id,
+            {"name": name, "status": status},
+        )
 
         self._commit()
         self._refresh(investigation)
@@ -197,6 +205,13 @@ class InvestigationService(BaseService):
             roles=[role],
         )
         self._investigation_repo.add_user_role(role_entry)
+        CollaborationService(self.db).record(
+            investigation_id,
+            user_id,
+            "collaborator added",
+            target_user.id,
+            {"email": target_user.email, "role": role.value},
+        )
         self._commit()
         self._db.refresh(role_entry)
         return role_entry
@@ -226,6 +241,15 @@ class InvestigationService(BaseService):
         entry = self._investigation_repo.update_user_role(
             target_user_id, investigation_id, [role]
         )
+        if entry is None:
+            raise NotFoundError("Collaborator not found")
+        CollaborationService(self.db).record(
+            investigation_id,
+            user_id,
+            "collaborator role updated",
+            target_user_id,
+            {"role": role.value},
+        )
         self._commit()
         self._db.refresh(entry)
         return entry
@@ -248,6 +272,9 @@ class InvestigationService(BaseService):
             raise PermissionDeniedError("Cannot remove owner")
 
         self._investigation_repo.remove_user_role(target_user_id, investigation_id)
+        CollaborationService(self.db).record(
+            investigation_id, user_id, "collaborator removed", target_user_id, {}
+        )
         self._commit()
 
 

@@ -6,6 +6,7 @@ import { useEditor } from '@tiptap/react'
 import { Typography } from '@tiptap/extension-typography'
 import { Placeholder } from '@tiptap/extension-placeholder'
 import { Underline } from '@tiptap/extension-underline'
+import { Highlight } from '@tiptap/extension-highlight'
 import { TextStyle } from '@tiptap/extension-text-style'
 import {
   Link,
@@ -67,6 +68,7 @@ const createExtensions = ({
   }),
   Link,
   Underline,
+  Highlight,
   Image.configure({
     allowedMimeTypes: ['image/*'],
     maxFileSize: 5 * 1024 * 1024,

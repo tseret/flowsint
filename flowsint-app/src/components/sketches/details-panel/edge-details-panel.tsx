@@ -13,10 +13,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { CaseWorkspace } from '@/components/dashboard/investigation/case-workspace'
 
 const EdgeDetailsPanel = memo(() => {
   const { canEdit } = usePermissions()
-  const { id: sketchId } = useParams({ strict: false })
+  const { id: sketchId, investigationId } = useParams({ strict: false })
   const nodes = useGraphStore((s) => s.nodes)
   const setCurrentNodeId = useGraphStore((s) => s.setCurrentNodeId)
   const setCurrentEdgeId = useGraphStore((s) => s.setCurrentEdgeId)
@@ -219,6 +220,38 @@ const EdgeDetailsPanel = memo(() => {
 
         {/* Properties */}
         <div className="w-full overflow-x-hidden">
+          <section className="p-3 border-b space-y-2 text-xs">
+            <h3 className="font-semibold">Supporting observations</h3>
+            {!edge.observations?.length && (
+              <p className="text-muted-foreground">
+                No source observations recorded for this relationship.
+              </p>
+            )}
+            {edge.observations?.map((observation, index) => (
+              <article
+                key={`${observation.scan_id}-${index}`}
+                className="rounded border p-2 space-y-1 break-words"
+              >
+                <p>{observation.provider || observation.enricher || 'Unknown provider'}</p>
+                {observation.observed_at && <p>Observed: {observation.observed_at}</p>}
+                {observation.retrieved_at && <p>Retrieved: {observation.retrieved_at}</p>}
+                {observation.scan_id && <p>Run: {observation.scan_id}</p>}
+                {observation.source_ref &&
+                  (/^https?:\/\//i.test(observation.source_ref) ? (
+                    <a
+                      className="underline"
+                      href={observation.source_ref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Source reference
+                    </a>
+                  ) : (
+                    <p>Source: {observation.source_ref}</p>
+                  ))}
+              </article>
+            ))}
+          </section>
           {/* Label */}
           <div className="flex w-full bg-card items-center divide-x divide-border border-b border-border p-0">
             <div className="w-1/2 px-3 py-1.5 text-xs text-muted-foreground font-normal truncate">
@@ -314,6 +347,19 @@ const EdgeDetailsPanel = memo(() => {
             </div>
           </div>
         </div>
+        {investigationId && sketchId && (
+          <div className="p-3">
+            <CaseWorkspace
+              key={edge.id}
+              investigationId={investigationId}
+              target={{
+                sketch_id: sketchId,
+                target_kind: 'relationship',
+                target_id: String(edge.id)
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

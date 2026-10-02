@@ -28,6 +28,7 @@ export type NodeShape = 'circle' | 'square' | 'hexagon' | 'triangle'
 
 export type GraphNode = {
   id: string
+  version?: number
   nodeType: string
   nodeLabel: string
   nodeProperties: NodeProperties
@@ -73,6 +74,16 @@ export type GraphEdge = {
   type?: string
   weight?: number
   confidence_level?: number | string
+  observations?: EvidenceObservation[]
+}
+
+export type EvidenceObservation = {
+  provider?: string
+  enricher?: string
+  scan_id?: string
+  retrieved_at?: string
+  observed_at?: string
+  source_ref?: string
 }
 
 // The imperative handle exposed by <ForceGraph2D<GraphNode, GraphEdge>

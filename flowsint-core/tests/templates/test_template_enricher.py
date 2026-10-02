@@ -636,3 +636,25 @@ class TestTemplateEnricherFromYaml:
         enricher = TemplateEnricher(template=template, sketch_id="test")
         assert enricher.template.output.is_array is True
         assert enricher.template.output.array_path == "data.results"
+
+
+@pytest.mark.asyncio
+async def test_template_failure_does_not_reassign_result_to_failed_input(
+    httpx_mock, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from flowsint_types import Ip
+
+    httpx_mock.add_response(status_code=404)
+    httpx_mock.add_response(json={"ip": "1.1.1.1"})
+    enricher = TemplateEnricher(template=create_test_template(), sketch_id="test")
+    enricher._graph_service = MagicMock()
+    relationship = MagicMock()
+    monkeypatch.setattr(enricher, "create_relationship", relationship)
+    inputs = [Ip(address="8.8.8.8"), Ip(address="1.1.1.1")]
+    results = await enricher.execute(inputs)
+    assert len(results) == 1
+    assert enricher.execution_summary["outcome"] == "partial"
+    assert relationship.call_args.args[0].address == "1.1.1.1"
+    assert relationship.call_args.args[1].address == "1.1.1.1"

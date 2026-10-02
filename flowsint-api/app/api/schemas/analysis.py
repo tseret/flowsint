@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import UUID4, BaseModel
+from pydantic import UUID4, BaseModel, Field
 
 from .base import ORMBase
 
@@ -15,6 +15,7 @@ class AnalysisCreate(BaseModel):
 
 
 class AnalysisRead(ORMBase):
+    version: int
     id: UUID4
     title: str
     description: Optional[str]
@@ -26,6 +27,7 @@ class AnalysisRead(ORMBase):
 
 
 class AnalysisUpdate(BaseModel):
+    version: int = Field(ge=1)
     title: Optional[str] = None
     description: Optional[str] = None
     content: Optional[Any] = None

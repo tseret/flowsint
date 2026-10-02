@@ -43,6 +43,10 @@ class IpToInternetDbEnricher(Enricher):
                     )
                     continue
                 if response.status_code != 200:
+                    self.report_issue(
+                        "quota_exceeded" if response.status_code == 429 else "failed",
+                        f"InternetDB returned HTTP {response.status_code}.",
+                    )
                     Logger.error(
                         self.sketch_id,
                         {
@@ -52,13 +56,18 @@ class IpToInternetDbEnricher(Enricher):
                     continue
                 body = response.json()
                 for number in body.get("ports") or []:
-                    port = Port(number=number, protocol="tcp", state="open")
+                    port = Port(
+                        host=ip.address, number=number, protocol="tcp", state="open"
+                    )
                     results.append(port)
                     self._ports.append((ip, port))
                 for hostname in body.get("hostnames") or []:
                     try:
                         self._hostnames.append((ip, Domain(domain=hostname)))
                     except Exception as e:
+                        self.report_issue(
+                            "partial", "InternetDB returned an invalid hostname."
+                        )
                         Logger.error(
                             self.sketch_id,
                             {"message": f"[InternetDB] Bad hostname {hostname}: {e}"},
@@ -75,6 +84,9 @@ class IpToInternetDbEnricher(Enricher):
                     },
                 )
             except Exception as e:
+                self.report_issue(
+                    "failed", f"InternetDB lookup failed ({type(e).__name__})."
+                )
                 Logger.error(
                     self.sketch_id,
                     {"message": f"[InternetDB] Error for {ip.address}: {e}"},

@@ -3,6 +3,14 @@ export interface EnricherProperty {
   type: string
 }
 
+export type EnricherReadiness = {
+  credentials_configured: boolean
+  missing_required_keys: string[]
+  last_run: import('./scan').RunSummary | null
+  last_run_at: string | null
+  last_success_at: string | null
+}
+
 export interface EnricherIO {
   type: string
   properties: EnricherProperty[]

@@ -10,6 +10,7 @@ celery = Celery(
         "flowsint_core.tasks.event",
         "flowsint_core.tasks.enricher",
         "flowsint_core.tasks.flow",
+        "flowsint_core.tasks.diagnostics",
     ],
 )
 

@@ -1,0 +1,99 @@
+# Matching local builds, upgrades, and recovery
+
+`make build-local` builds API and frontend production images from the checkout.
+API and Celery use the **same** image. Images carry the same git revision, also
+shown under Profile → Setup diagnostics. A dirty checkout is labelled `-dirty`;
+commit before a release build. Both frontend builds and CI use the root workspace
+`yarn.lock`; the stale standalone frontend lock has been removed. Python uses the
+workspace `uv.lock`. Dependency lockfiles are enforced. Base image tags
+can still change, so these builds guarantee matching source, not identical bytes.
+
+The build configuration intentionally does not load `docker-compose.local.yml`:
+individual file mounts over stock images would undo that guarantee. The existing
+local override is preserved for your current installation.
+
+Build and validate without deploying:
+
+```sh
+make config-local
+make build-local
+```
+
+Deployment is a separate, explicit action. After taking and verifying a backup,
+set the revision used by the build, then use exactly these two Compose files:
+
+```sh
+export FLOWSINT_BUILD_REVISION=$(git describe --always --dirty --abbrev=12)
+docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up -d --pull never
+```
+
+The API entrypoint runs Alembic before serving requests. Celery waits for the API
+healthcheck and skips migrations. Do not mix an older worker with a newer API.
+Check diagnostics for matching frontend/API/worker builds, connector inventories,
+and database revision. `DOCKER_SOCKET_GID` defaults to `0` for Docker Desktop;
+on Linux, set it to the Docker socket's group ID if Docker-backed tools need it.
+
+## Consistent backup
+
+PostgreSQL and Neo4j contain different parts of a case. Pause **all writers** before
+backing up both, including standalone clients. These commands use production
+Compose; they stop the UI/API/worker and Neo4j until the backup is complete.
+Use a private, encrypted backup destination. Never commit backups or `.env`.
+
+```sh
+umask 077
+backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$backup_dir"
+docker compose -f docker-compose.prod.yml stop app api celery
+docker compose -f docker-compose.prod.yml stop neo4j
+docker compose -f docker-compose.prod.yml exec -T postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \
+  > "$backup_dir/postgres.dump"
+docker compose -f docker-compose.prod.yml run --rm -T --no-deps \
+  --entrypoint neo4j-admin neo4j database dump neo4j --to-stdout \
+  > "$backup_dir/neo4j.dump"
+docker compose -f docker-compose.prod.yml run --rm -T --no-deps \
+  --entrypoint neo4j-admin neo4j database dump system --to-stdout \
+  > "$backup_dir/system.dump"
+cp .env "$backup_dir/environment.env"
+git rev-parse HEAD > "$backup_dir/revision.txt"
+shasum -a 256 "$backup_dir"/*.dump > "$backup_dir/checksums.txt"
+```
+
+Check every command's exit status and that the dump files are nonempty before
+restarting. On failure, retain the previous verified backup. The environment copy
+contains the vault encryption key and authentication/database secrets: protect it
+as strictly as the data. Losing `MASTER_VAULT_KEY_V1` makes encrypted provider keys
+unrecoverable. Preserve any other configured vault key versions as well. Redis is
+not a case-data backup; drain active jobs before maintenance rather than replaying
+old queued tasks after recovery.
+
+Restart using the configuration that originally started your stack (`make up-prod`
+for the existing local overrides, or the explicit matching-build command above).
+
+## Restore rehearsal
+
+Always rehearse in a separate environment with fresh volumes and no public ports.
+Use the database image versions from the backup, preserve the vault key, and load
+the backup's application revision before testing a subsequent upgrade. Do not use
+production container names or volumes for a rehearsal.
+
+Restore PostgreSQL into an empty database using:
+
+```sh
+pg_restore --exit-on-error --single-transaction --no-owner \
+  --dbname=flowsint postgres.dump
+```
+
+With the rehearsal Neo4j DBMS stopped, load the dumps using `neo4j-admin database
+load neo4j --from-stdin` and `neo4j-admin database load system --from-stdin`, piping
+the corresponding files into each command. Keep database authentication consistent
+with the restored system database. Run `neo4j-admin database check neo4j` offline.
+
+Verify case/sketch/analysis counts, graph node/relationship counts, access for an
+owner and viewer, and a Vault-backed lookup without exposing its secret. Then
+apply Alembic upgrades in the rehearsal and repeat those checks. A successful
+archive creation alone is not proof of recovery.
+
+References: [PostgreSQL pg_restore](https://www.postgresql.org/docs/15/app-pgrestore.html)
+and [Neo4j offline backup](https://neo4j.com/docs/operations-manual/current/backup-restore/offline-backup/).

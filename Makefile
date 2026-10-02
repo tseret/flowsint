@@ -2,6 +2,8 @@ PROJECT_ROOT := $(shell pwd)
 
 COMPOSE_DEV    := docker compose -f docker-compose.dev.yml
 COMPOSE_PROD   := docker compose -f docker-compose.prod.yml $(if $(wildcard docker-compose.local.yml),-f docker-compose.local.yml)
+BUILD_REVISION := $(shell git describe --always --dirty --abbrev=12)
+COMPOSE_BUILD  := FLOWSINT_BUILD_REVISION=$(BUILD_REVISION) docker compose -f docker-compose.prod.yml -f docker-compose.build.yml
 
 .PHONY: \
 	dev prod \
@@ -40,6 +42,14 @@ dev:
 build-dev:
 	@echo "Building DEV images..."
 	$(COMPOSE_DEV) build
+
+# Build only; starting the matching stack is an explicit deployment action.
+.PHONY: build-local config-local
+build-local:
+	$(COMPOSE_BUILD) build api app
+
+config-local:
+	$(COMPOSE_BUILD) config --quiet
 
 up-dev:
 	$(COMPOSE_DEV) up -d

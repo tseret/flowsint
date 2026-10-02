@@ -13,6 +13,10 @@ from pydantic import BaseModel, Field
 GraphDict = Dict[str, Any]
 
 
+class NodeVersionConflict(Exception):
+    """A node changed since the editing client read it."""
+
+
 class NodeMetadata(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
@@ -35,6 +39,7 @@ class GraphNode(BaseModel):
     nodeImage: Optional[str] = None
     nodeFlag: Optional[str] = None
     nodeShape: Optional[str] = None
+    version: int = 0
 
     nodeMetadata: NodeMetadata
     nodeProperties: Any
@@ -52,6 +57,7 @@ class GraphEdge(BaseModel):
     caption: Optional[str] = None
     type: Optional[str] = None
     weight: Optional[float] = None
+    observations: List[Dict[str, Any]] = Field(default_factory=list)
     confidence_level: Optional[Union[float, str]] = None
 
 

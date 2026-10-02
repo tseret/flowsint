@@ -46,6 +46,9 @@ class IpToPortsShodanEnricher(Enricher):
 
         api_key = self.get_secret(KEY, os.getenv(KEY))
         if not api_key:
+            self.report_issue(
+                "missing_credentials", "Shodan API key is not configured."
+            )
             Logger.error(self.sketch_id, {"message": f"[Shodan] {KEY} is required."})
             return results
 
@@ -64,6 +67,10 @@ class IpToPortsShodanEnricher(Enricher):
                     )
                     continue
                 if response.status_code != 200:
+                    self.report_issue(
+                        "quota_exceeded" if response.status_code == 429 else "failed",
+                        f"Shodan returned HTTP {response.status_code}.",
+                    )
                     Logger.error(
                         self.sketch_id,
                         {
@@ -83,6 +90,7 @@ class IpToPortsShodanEnricher(Enricher):
                         p for p in (item.get("product"), item.get("version")) if p
                     )
                     port = Port(
+                        host=ip.address,
                         number=item["port"],
                         protocol=item.get("transport"),
                         state="open",
@@ -98,6 +106,9 @@ class IpToPortsShodanEnricher(Enricher):
                     except ValueError:  # skip names Domain rejects, keep the rest
                         continue
             except Exception as e:
+                self.report_issue(
+                    "failed", f"Shodan lookup failed ({type(e).__name__})."
+                )
                 Logger.error(
                     self.sketch_id,
                     {

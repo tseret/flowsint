@@ -402,6 +402,31 @@ class TestBatchCreateEdgesByElementId:
 
 
 class TestUpdateNode:
+    def test_stale_version_raises_conflict_without_overwriting(self):
+        from flowsint_core.core.graph.types import NodeVersionConflict
+
+        connection = MagicMock()
+        connection.query.side_effect = [[], [{"id": "elem-1"}]]
+        repo = Neo4jGraphRepository(neo4j_connection=connection)
+        with pytest.raises(NodeVersionConflict):
+            repo.update_node(
+                "elem-1", {"nodeLabel": "stale", "version": 99}, "sketch-1", 2
+            )
+        query, params = connection.query.call_args_list[0].args
+        assert params["expected_version"] == 2
+        assert params["check_version"] is True
+        assert "version" not in params["props"]
+        assert query.index("SET n.version = coalesce") < query.index("WITH n")
+
+    def test_legacy_update_keeps_all_query_parameters(self):
+        connection = MagicMock()
+        connection.query.return_value = [{"id": "elem-1"}]
+        repo = Neo4jGraphRepository(neo4j_connection=connection)
+        assert repo.update_node("elem-1", {"nodeLabel": "new"}, "sketch-1") == "elem-1"
+        params = connection.query.call_args.args[1]
+        assert params["expected_version"] == -1
+        assert params["check_version"] is False
+
     def test_update_node_success(self):
         mock_connection = MagicMock()
         mock_connection.query.return_value = [{"id": "elem-1"}]
@@ -867,3 +892,43 @@ class TestContextManager:
         # Should have cleared, not flushed
         mock_connection.execute_batch.assert_not_called()
         assert len(repo._batch_operations) == 0
+
+
+def test_relationship_observation_appends_without_overwriting_previous_runs():
+    import json
+
+    repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+    observation = {"provider": "example", "scan_id": "run-1"}
+    query, params = repo._build_relationship_query(
+        {
+            "from_type": "domain",
+            "from_label": "example.com",
+            "to_type": "ip",
+            "to_label": "1.1.1.1",
+            "rel_label": "RESOLVES_TO",
+            "observation": observation,
+        },
+        "sketch",
+    )
+    assert json.loads(params["observation"]) == observation
+    assert "observation" not in params["props"]
+    assert "coalesce(r.observations, []) + [$observation]" in query
+
+
+def test_legacy_port_adoption_requires_matching_host_and_protocol():
+    from flowsint_core.core.graph.serializer import GraphSerializer
+    from flowsint_types import Port
+
+    repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+    query, params = repo._build_node_query(
+        GraphSerializer.flowsint_type_to_neo4j_dict(
+            Port(host="1.1.1.1", number=443, protocol="tcp")
+        ),
+        "sketch",
+    )
+    assert params["legacy_identity"] == {
+        "nodeProperties.host": "1.1.1.1",
+        "nodeProperties.number": 443,
+        "nodeProperties.protocol": "tcp",
+    }
+    assert "legacy[key] = $legacy_identity[key]" in query

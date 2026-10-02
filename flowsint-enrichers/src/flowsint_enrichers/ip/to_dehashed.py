@@ -45,6 +45,7 @@ class IpToIntelligence(Enricher):
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
+        self._pairs = []
 
         api_key = self.get_secret("DEHASHED_API_KEY", os.getenv("DEHASHED_API_KEY"))
 
@@ -132,6 +133,7 @@ class IpToIntelligence(Enricher):
                             usernames=entry_username if entry_username else None,
                         )
                     )
+                    self._pairs.append((ip, results[-1]))
             except Exception as e:
                 Logger.error(
                     self.sketch_id,
@@ -148,18 +150,15 @@ class IpToIntelligence(Enricher):
         if not self._graph_service:
             return results
 
-        if input_data and self._graph_service:
-            for ip in input_data:
-                for individual in results:
-                    self.create_node(ip)
-                    self.create_node(individual)
+        for ip, individual in self._pairs:
+            self.create_node(ip)
+            self.create_node(individual)
 
-                    # Create relationship
-                    self.create_relationship(ip, individual, "CONNECTION_WITH")
-                    self.log_graph_message(
-                        f"(IpToIntelligence) Successfully found individual connections with {ip.address}."
-                    )
-
+            # Create relationship
+            self.create_relationship(ip, individual, "CONNECTION_WITH")
+            self.log_graph_message(
+                f"(IpToIntelligence) Successfully found individual connections with {ip.address}."
+            )
         return results
 
 

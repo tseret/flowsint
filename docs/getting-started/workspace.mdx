@@ -1,0 +1,55 @@
+# Investigation workspace
+
+Open a case to record questions, comments, and findings in **Investigation
+workspace**. Questions can be assigned to existing collaborators. Findings keep
+supporting evidence references and an analyst assessment; owners and admins can
+accept or reject them. Changing a finding or its evidence resets its review.
+The activity feed records the actor and changes, including collaborator and
+analysis edits. Existing investigation roles govern all access.
+
+Select an entity or relationship to attach a comment, question, or finding to
+that particular part of the graph. Collaboration items and activity are stored
+on the server. They are not evidence-file uploads: attach source references or
+observation descriptions in the supporting-evidence field.
+
+## Enrichment results
+
+**Recent enrichment runs** distinguishes results, no matches, partial results,
+missing credentials, quota limits, and failed runs. Expand it for input/output
+counts, elapsed time, and errors. The enricher launcher shows required credential
+names and recent run availability without revealing stored secret values.
+Provider errors are not evidence of no matches.
+
+Relationship details show the provider, run, retrieval time, source observation
+time (when supplied), and source reference. Repeated runs retain multiple
+observations. Retrieval time and observation time describe different events:
+retrieving historical DNS today does not make that resolution current.
+
+VirusTotal passive DNS follows up to five pages by default. `max_pages` accepts
+1–25 pages; truncation is reported as a partial result. Domain/IP reputation
+lookups use existing provider data. TLS results create certificate entities.
+Ports identify endpoints by host, number, and protocol.
+
+## Graph views
+
+Enrichment refresh keeps existing positions and filters. A dismissible change
+summary highlights added or updated entities and relationships. Evidence filters
+select provider, source observation date, and relationship type; unmatched
+relationships are hidden while entities remain visible.
+
+Infrastructure summaries let you collapse or expand CIDR, IP, and Port types.
+Save a named view to retain filters, positions, and display mode. Named views are
+personal to this account and sketch in this browser; they are not shared views
+and do not transfer automatically to another browser.
+
+## Concurrent editing and setup
+
+Entity and analysis saves check the version you originally read. If another
+editor or enrichment changed the entity, your draft is retained and the save is
+rejected. Copy your draft before explicitly loading the latest version, then
+reconcile and save. Case-item edits also reject stale versions.
+
+Profile → **Setup diagnostics** checks service availability, database migration
+revision, API/worker connector inventories, and matching build revisions. See
+[local deployment](../developers/local-deployment.mdx) for matching images,
+upgrades, and backup/restore procedures.

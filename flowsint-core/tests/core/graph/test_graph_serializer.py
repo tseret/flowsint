@@ -32,6 +32,7 @@ def test_serializer():
 
     expected = {
         "id": "id",
+        "nodeKey": GraphSerializer.canonical_key(node.nodeProperties),
         "nodeLabel": "nodeLabel",
         "nodeType": "domain",
         "nodeColor": "nodeColor",
@@ -40,6 +41,7 @@ def test_serializer():
         "nodeImage": "nodeImage",
         "nodeIcon": "nodeIcon",
         "nodeShape": "circle",
+        "version": 0,
         "x": 100.0,
         "y": 100.0,
         "nodeProperties.domain": "domain.com",
@@ -102,8 +104,8 @@ def test_serialize_from_flowsint_type():
     assert neo4j_dict["nodeImage"] is None
     assert neo4j_dict["nodeIcon"] is None
     assert neo4j_dict["nodeFlag"] is None
-    assert neo4j_dict["x"] == 100.0
-    assert neo4j_dict["y"] == 100.0
+    assert "x" not in neo4j_dict
+    assert "y" not in neo4j_dict
     assert neo4j_dict["nodeProperties.domain"] == "domain.com"
     assert neo4j_dict["nodeProperties.root"] is True
 
@@ -256,6 +258,12 @@ class TestGraphEdgeToGraphDict:
         to_obj = Domain(domain="target.com")
         result = GraphSerializer.graph_edge_to_neo4j_dict(from_obj, to_obj, "LINKS_TO")
         assert result == {
+            "from_key": GraphSerializer.canonical_key(
+                from_obj if isinstance(from_obj, Domain) else from_obj.nodeProperties
+            ),
+            "to_key": GraphSerializer.canonical_key(
+                to_obj if isinstance(to_obj, Domain) else to_obj.nodeProperties
+            ),
             "from_type": "domain",
             "from_label": "source.com",
             "to_type": "domain",
@@ -280,6 +288,12 @@ class TestGraphEdgeToGraphDict:
         )
         result = GraphSerializer.graph_edge_to_neo4j_dict(from_obj, to_obj, "RESOLVES")
         assert result == {
+            "from_key": GraphSerializer.canonical_key(
+                from_obj if isinstance(from_obj, Domain) else from_obj.nodeProperties
+            ),
+            "to_key": GraphSerializer.canonical_key(
+                to_obj if isinstance(to_obj, Domain) else to_obj.nodeProperties
+            ),
             "from_type": "ip",
             "from_label": "source",
             "to_type": "domain",
@@ -298,6 +312,12 @@ class TestGraphEdgeToGraphDict:
         )
         result = GraphSerializer.graph_edge_to_neo4j_dict(from_obj, to_obj, "HOSTS")
         assert result == {
+            "from_key": GraphSerializer.canonical_key(
+                from_obj if isinstance(from_obj, Domain) else from_obj.nodeProperties
+            ),
+            "to_key": GraphSerializer.canonical_key(
+                to_obj if isinstance(to_obj, Domain) else to_obj.nodeProperties
+            ),
             "from_type": "domain",
             "from_label": "source.com",
             "to_type": "ip",
@@ -361,3 +381,43 @@ class TestGraphDictToGraphNodeErrors:
         node_dict = {"id": "123"}
         with pytest.raises(Exception, match="Could not find node data"):
             GraphSerializer.neo4j_dict_to_graph_node(node_dict)
+
+
+def test_canonical_identity_survives_label_changes_and_port_services():
+    from flowsint_types import Port
+
+    domain = Domain(domain="example.com")
+    renamed = domain.model_copy(update={"nodeLabel": "Investigation target"})
+    assert GraphSerializer.canonical_key(domain) == GraphSerializer.canonical_key(
+        renamed
+    )
+    port = Port(host="1.1.1.1", number=443, protocol="tcp", service="https")
+    changed_service = Port(
+        host="1.1.1.1", number=443, protocol="TCP", service="unknown"
+    )
+    other_host = Port(host="2.2.2.2", number=443, protocol="tcp")
+    assert GraphSerializer.canonical_key(port) == GraphSerializer.canonical_key(
+        changed_service
+    )
+    assert GraphSerializer.canonical_key(port) != GraphSerializer.canonical_key(
+        other_host
+    )
+
+
+def test_edge_observations_survive_graph_api_serialization():
+    import json
+
+    observations = [
+        {"provider": "one", "scan_id": "run-1"},
+        {"provider": "two", "scan_id": "run-2"},
+    ]
+    edge = GraphSerializer.neo4j_dict_to_graph_edge(
+        {
+            "id": "edge",
+            "source": "a",
+            "target": "b",
+            "type": "RESOLVES_TO",
+            "data": {"observations": [json.dumps(item) for item in observations]},
+        }
+    )
+    assert edge.observations == observations

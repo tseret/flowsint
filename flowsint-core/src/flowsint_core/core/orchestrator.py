@@ -367,7 +367,22 @@ class FlowOrchestrator(Enricher):
                             raise ValueError(
                                 f"Enricher '{enricher_name}' returned unsupported output format"
                             )
-                        # Cache the results
+                        summary = getattr(enricher, "execution_summary", {})
+                        step_result["summary"] = summary
+                        log_entry["summary"] = summary
+                        if summary.get("outcome") in {
+                            "failed",
+                            "missing_credentials",
+                            "quota_exceeded",
+                        }:
+                            raise ValueError(
+                                "; ".join(
+                                    issue["message"]
+                                    for issue in summary.get("errors", [])
+                                )
+                                or "Enrichment failed"
+                            )
+                        # Cache successful results only.
                         enricher_results_cache[cache_key] = outputs
                         log_entry["cache_hit"] = False
 

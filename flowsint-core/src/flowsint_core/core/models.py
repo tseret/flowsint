@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -136,9 +137,10 @@ class Scan(Base):
     # Same legacy Column() style as Log.type above.
     status: Any = Column(SQLEnum(EventLevel), default=EventLevel.PENDING)
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    completed_at = Column(DateTime, nullable=True)
-    error = Column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     details = Column(JSON, nullable=True)
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
     sketch = relationship("Sketch", back_populates="scans")
@@ -225,6 +227,8 @@ class Analysis(Base):
     title = mapped_column(Text, nullable=False)
     description = mapped_column(Text, nullable=True)
     content = mapped_column(JSON, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_updated_at = mapped_column(DateTime(timezone=True), server_default=func.now())
     owner_id = mapped_column(
@@ -420,3 +424,55 @@ class EnricherTemplate(Base):
         Index("idx_enricher_templates_category", "category"),
         Index("idx_enricher_templates_is_public", "is_public"),
     )
+
+
+class CaseItem(Base):
+    """An investigative question, finding, or comment with a review trail."""
+
+    __tablename__ = "case_items"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("investigations.id", ondelete="CASCADE"), index=True
+    )
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    sketch_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("sketches.id", ondelete="CASCADE")
+    )
+    target_kind: Mapped[str | None] = mapped_column(String)
+    target_id: Mapped[str | None] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)
+    body: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[str] = mapped_column(Text, default="", server_default="")
+    assessment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    decision: Mapped[str] = mapped_column(
+        String, default="pending", server_default="pending"
+    )
+    status: Mapped[str] = mapped_column(String, default="open", server_default="open")
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
+
+
+class CaseActivity(Base):
+    __tablename__ = "case_activity"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("investigations.id", ondelete="CASCADE"), index=True
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    actor_name: Mapped[str] = mapped_column(String)
+    action: Mapped[str] = mapped_column(String)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    details: Mapped[dict] = mapped_column(JSON)
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())

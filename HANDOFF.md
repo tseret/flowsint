@@ -121,3 +121,17 @@ Done:
 
 Next:
 - Keep `docker-compose.local.yml` alongside this checkout to retain the SSE fix and connector mounts; it is intentionally git-excluded. Reload any case tab left open across API recreation so it reconnects to the new stream.
+
+## 2026-10-02 — investigation workspace improvements
+Done:
+- Added explicit enrichment outcomes, persisted run summaries and dated relationship observations; canonical entity identities include port host/protocol and certificate fingerprints. Fixed batch input/output pairing and retained graph positions during refresh.
+- Added evidence filters, infrastructure visibility controls, change highlights, browser-local personal views, readiness/freshness indicators and relationship evidence details.
+- Added persistent case questions/comments/findings, assignments, review decisions and actor activity. Analysis and entity edits use optimistic versions and preserve conflicted drafts; analysis autosaves serialize locally.
+- Added bounded passive VirusTotal pagination and domain/IP reputation, certificate metadata, diagnostics and matching API/worker/frontend build revisions. Frontend containers now use the root workspace lockfile; removed the stale app lockfile.
+- Documented workspace use and protected PostgreSQL/Neo4j/vault backup and recovery. Recorded the user's runtime preference in local AGENTS.md: foreground checks are allowed; no additional app/database services or deployment.
+- Verification: 674 Python tests passed (58 types, 462 core, 128 enrichers, 26 API); four opt-in Neo4j tests skipped in the ordinary suite. Three live Neo4j regression tests and the complete empty-PostgreSQL migration chain passed before temporary services were removed. Final focused task checks: 18 passed. Frontend: 23 tests and production build passed. Strict mypy passed all 140 changed Python files; full lint passed (129 existing frontend warnings). Full frontend typecheck still reports 84 inherited errors, down from 88, with no new diagnostic signatures.
+- Existing localhost:5173 case loaded without console errors. The new implementation has not been deployed there. Temporary verification services were stopped and removed; the existing stack is unchanged.
+
+Next:
+- Review the draft PR and explicitly authorize deployment before migrating/replacing the running stack. Verify the new UI journeys after deployment.
+- Perform the documented backup/restore rehearsal against separate volumes when additional database services are authorized. Live provider mapping/quota checks remain dependent on provider access; no fresh provider calls were made for this change.

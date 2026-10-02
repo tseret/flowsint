@@ -108,7 +108,9 @@ class GraphService:
             )
         return None
 
-    def create_node_from_flowsint_type(self, node_obj: FlowsintType) -> str | None:
+    def create_node_from_flowsint_type(
+        self, node_obj: FlowsintType, metadata: Optional[Dict[str, Any]] = None
+    ) -> str | None:
         """
         Create or update a node from a FlowsintType.
 
@@ -126,6 +128,10 @@ class GraphService:
         neo4j_node_dict: GraphDict = GraphSerializer.flowsint_type_to_neo4j_dict(
             node_obj
         )
+        if metadata:
+            neo4j_node_dict.update(
+                {f"nodeMetadata.{key}": value for key, value in metadata.items()}
+            )
 
         if self._enable_batching:
             self._repository.add_to_batch(
@@ -163,6 +169,7 @@ class GraphService:
         from_obj: BaseModel,
         to_obj: BaseModel,
         rel_label: str = "IS_RELATED_TO",
+        observation: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Create a relationship between two nodes, matched by type and label.
@@ -176,6 +183,8 @@ class GraphService:
         neo4j_rel_dict: GraphDict = GraphSerializer.graph_edge_to_neo4j_dict(
             from_obj, to_obj, rel_label
         )
+        if observation:
+            neo4j_rel_dict["observation"] = observation
 
         if self._enable_batching:
             self._repository.add_to_batch(
@@ -213,13 +222,34 @@ class GraphService:
         edges = GraphSerializer.deserialize_edges(graph_data.get("edges", []))
         return GraphData(nodes=nodes, edges=edges)
 
-    def update_node(self, element_id: str, updates: Dict[str, Any]) -> str | None:
+    def update_node(
+        self,
+        element_id: str,
+        updates: Dict[str, Any],
+        expected_version: Optional[int] = None,
+    ) -> str | None:
+        """Validate edited properties and keep their canonical identity current."""
+        updates = {key: value for key, value in updates.items() if key != "nodeKey"}
+        if "nodeProperties" in updates:
+            records = self._repository.get_nodes_by_ids([element_id], self._sketch_id)
+            if not records:
+                return None
+            current = GraphSerializer.neo4j_dict_to_graph_node(
+                {**records[0], "id": element_id}, type_resolver=self._type_resolver
+            )
+            entity = type(current.nodeProperties).model_validate(
+                {**current.nodeProperties.model_dump(), **updates["nodeProperties"]}
+            )
+            updates["nodeProperties"] = entity.model_dump(
+                mode="json", exclude_unset=True
+            )
+            updates["nodeKey"] = GraphSerializer.canonical_key(entity)
         flatten_updates = GraphSerializer.flatten(updates)
-        """Update a node by its element ID."""
         return self._repository.update_node(
             element_id=element_id,
             updates=flatten_updates,
             sketch_id=self._sketch_id,
+            expected_version=expected_version,
         )
 
     def update_nodes_positions(self, positions: List[Dict[str, Any]]) -> int:

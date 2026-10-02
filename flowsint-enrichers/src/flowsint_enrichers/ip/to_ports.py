@@ -103,6 +103,10 @@ class IpToPortsEnricher(Enricher):
 
         # Validate passive mode requirements
         if mode == "passive" and not api_key:
+            self.report_issue(
+                "missing_credentials",
+                "PDCP_API_KEY is not configured for passive mode.",
+            )
             Logger.warn(
                 self.sketch_id,
                 {
@@ -138,15 +142,13 @@ class IpToPortsEnricher(Enricher):
                         continue
 
                     port = Port(
+                        host=ip.address,
                         number=port_number,
                         protocol=result.get("protocol", "tcp").upper(),
                         state="open",  # Naabu only returns open ports
                         service=result.get("service"),
                         banner=result.get("version") or result.get("banner"),
                     )
-
-                    # Store the IP address with this port for postprocess
-                    setattr(port, "_ip_address", ip.address)
 
                     results.append(port)
 
@@ -159,6 +161,9 @@ class IpToPortsEnricher(Enricher):
                     )
 
             except Exception as e:
+                self.report_issue(
+                    "failed", f"NAABU lookup failed ({type(e).__name__})."
+                )
                 Logger.error(
                     self.sketch_id,
                     {"message": f"[NAABU] Error scanning {ip.address}: {e}"},
@@ -174,7 +179,7 @@ class IpToPortsEnricher(Enricher):
         if self._graph_service and results:
             for port in results:
                 # Get the IP address this port belongs to
-                ip_address = getattr(port, "_ip_address", None)
+                ip_address = port.host
                 if not ip_address:
                     continue
 
@@ -188,9 +193,6 @@ class IpToPortsEnricher(Enricher):
                 self.log_graph_message(
                     f"Port {port.number}/{port.protocol}{service_info} found on {ip_address}"
                 )
-
-                # Clean up temporary attribute
-                delattr(port, "_ip_address")
 
         return results
 

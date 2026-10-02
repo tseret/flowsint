@@ -45,6 +45,9 @@ class IpToPortsDriftnetEnricher(Enricher):
 
         api_key = self.get_secret(KEY, os.getenv(KEY))
         if not api_key:
+            self.report_issue(
+                "missing_credentials", "Driftnet API key is not configured."
+            )
             Logger.error(self.sketch_id, {"message": f"[Driftnet] {KEY} is required."})
             return results
 
@@ -57,6 +60,10 @@ class IpToPortsDriftnetEnricher(Enricher):
                     timeout=30,
                 )
                 if response.status_code in (403, 429):
+                    self.report_issue(
+                        "quota_exceeded" if response.status_code == 429 else "failed",
+                        f"Driftnet returned HTTP {response.status_code}.",
+                    )
                     # Quota and rate limits are per token: every later call fails too.
                     body = response.text.replace(api_key, "<redacted>")[:200]
                     Logger.error(
@@ -67,6 +74,10 @@ class IpToPortsDriftnetEnricher(Enricher):
                     )
                     break
                 if response.status_code != 200:
+                    self.report_issue(
+                        "quota_exceeded" if response.status_code == 429 else "failed",
+                        f"Driftnet returned HTTP {response.status_code}.",
+                    )
                     Logger.error(
                         self.sketch_id,
                         {
@@ -76,6 +87,9 @@ class IpToPortsDriftnetEnricher(Enricher):
                     continue
                 payload = response.json()
             except Exception as e:
+                self.report_issue(
+                    "failed", f"Driftnet lookup failed ({type(e).__name__})."
+                )
                 Logger.error(
                     self.sketch_id,
                     {
@@ -98,7 +112,9 @@ class IpToPortsDriftnetEnricher(Enricher):
                     {"message": f"[Driftnet] No open ports for {ip.address}"},
                 )
             for number in ports:
-                port = Port(number=int(number), protocol="tcp", state="open")
+                port = Port(
+                    host=ip.address, number=int(number), protocol="tcp", state="open"
+                )
                 results.append(port)
                 self._ports.append((ip, port))
 
