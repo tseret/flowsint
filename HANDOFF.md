@@ -278,3 +278,14 @@ Done:
 
 Next:
 - Reload Hexanet and select a pivot link to inspect its evidence; use Show pivot services for endpoint detail. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-03 — autonomous passive investigation agent
+Done:
+- Replaced the fixed-plan copilot with the `run_investigation_agent` Celery task. The LLM (ChatGPT subscription, GPT-5.6 Sol / medium) picks one allowlisted passive enricher per step (at most 10 nodes per step, `max_steps` 1–50, default 20), then writes a markdown report citing `[scan:<id>]` and up to 5 pending draft findings. Runs persist in `agent_runs` (migration `20261003_agent_runs`). Routes: `POST/GET /api/copilot/agent`, `GET /agent/{id}`, `POST /agent/{id}/cancel`. The old copilot routes were removed.
+- Live smoke test in a throwaway sketch, since deleted:
+  - Run 1 found 3 bugs from this branch, all now fixed with a regression test. (1) `max_pages` failed validation because `build_params_model` types every param as `str`. (2) CIDR enrichers crashed because legacy identity passed a raw `IPv4Network` to Neo4j; it is now JSON-normalized. (3) The canvas did not refresh as agent steps finished; it now refetches after each step.
+  - Run 2 completed 5 steps: VirusTotal 45, InternetDB, RIPEstat ASN, Shodan ports. It added 176 nodes and 4 pending findings, and the UI rendered the report.
+- Applied images v1.2.12-117-g4ea59a9e (api/worker) and v1.2.12-119-gd029c153 (frontend); all containers healthy, migration at head.
+
+Next:
+- Select 1–10 entities in a sketch, click Investigate selected entities, enter an objective and run. Review the draft findings in the case workspace. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.

@@ -1,38 +1,28 @@
 ---
 title: "Investigation copilot"
-description: "Review passive enrichment plans for selected entities and summarize their evidence."
+description: "Run an autonomous passive investigation agent on selected entities and review its cited findings."
 ---
 
-Select up to ten IPs in a sketch and choose **Investigate selected entities**
-(the sparkle button in the graph toolbar). Enter an investigation question, then
-choose **Gather IP intelligence**. This collects existing records from every
-installed, credential-ready provider in the supported catalog, tracks the runs,
-and automatically generates an evidence-linked report for human review. A blank
-question uses a general IP intelligence question. Providers with missing keys
-are skipped and shown as collection gaps; other providers still run.
+Select 1 to 10 entities in a sketch and choose **Investigate selected entities**
+(the sparkle button in the graph toolbar). Enter an objective, set **Maximum
+steps** (1 to 50, default 20) and choose **Run agent**.
 
-The catalog includes Shodan's indexed ports/services and fingerprints, VirusTotal
-reputation and historical passive DNS, ThreatFox reports, and Modat indexed ports
-where installed. No live port scan or rescan is triggered. Observation dates are
-preserved when supplied, so indexed open ports do not imply current reachability.
-Related domains and fingerprints can support candidate infrastructure links for
-review; discovered entities are never automatically queried.
+At each step the agent reads a compact view of the sketch graph, with the
+selected and newly found entities listed first, plus its past step outcomes. It
+then chooses one passive enricher and up to ten compatible sketch entities, and
+the run waits for that enrichment to finish. New entities appear on the graph as
+steps complete. The sheet shows each step's enricher, reason, entities, outcome,
+result count and errors exactly as reported. Choose **Cancel** to stop a running
+agent.
 
-**Suggest a plan** remains available for reviewing and editing a plan before
-execution, including mixed IP/domain selections.
-
-The copilot reads the selected entities, a bounded set of nearby relationships,
-and recent run summaries from that sketch. It proposes up to seven passive steps.
-Review each step's entities, provider, reason, and credential prerequisites.
-Remove unnecessary steps before choosing **Run reviewed plan**.
-
-Plans also support local root-domain normalization and domain ThreatFox lookups.
-Each selected IP receives at most six provider requests across the full catalog:
-one each for ThreatFox, Shodan services, Modat ports and VirusTotal reputation,
-plus two pages of VirusTotal DNS history. Missing/uninstalled providers reduce
-that count. Normalization makes no external requests. Saved copilot DNS recipes
-retain the two-page limit. Provider quota failures and partial coverage remain
-visible in run evidence.
+The agent can only choose enrichers from a fixed passive allowlist: WHOIS and
+domain history, ASN/CIDR, and indexed third-party records such as VirusTotal,
+Shodan, InternetDB, ThreatFox and breach data. It never contacts target
+infrastructure directly. Lookups that need unconfigured keys are rejected before
+they run, and the agent picks another. When the agent decides it has enough
+evidence, or runs out of steps, it writes a markdown report that cites each claim
+as `[scan:<id>]`. It also adds up to five draft findings to the case with a
+pending review decision. Review and decide those findings in the case workspace.
 
 ## Review services and indexed fingerprint matches
 
@@ -77,70 +67,36 @@ Older Modat port records need a passive refresh to recover discarded fingerprint
 banners and provider observation dates. Service evidence reloads when graph
 updates advance the port version, and a manual reload remains available.
 
-## Model configuration and evidence
+## Model connection and evidence
 
-Open **Profile → Copilot connection** and choose **Continue with ChatGPT** to
-connect an eligible ChatGPT subscription. Complete sign-in and consent, then
-return to Profile. The model picker lists models available to the connected
+The agent requires a connected ChatGPT subscription. Open **Profile → Copilot
+connection** and choose **Continue with ChatGPT**. Complete sign-in and consent,
+then return to Profile. The model picker lists models available to the connected
 account. The default is GPT-6.1 Sol with **medium** reasoning effort; if your
 account does not offer that model, choose an available model explicitly.
 
 Subscription usage counts against your ChatGPT allowance. A disconnected account,
-unavailable model, or exhausted allowance produces an actionable error; Flowsint
-does not automatically switch to paid API billing. Saved accounts can be selected
-and reconnected from Profile, or disconnected there. Tokens are encrypted in the
-existing Vault storage and never exposed through its key list.
+an unavailable model or an exhausted allowance produces an actionable error before
+the run starts. Flowsint never switches to paid API billing automatically. Saved
+accounts can be selected and reconnected from Profile, or disconnected there.
+Tokens are encrypted in the existing Vault storage and never exposed through its
+key list.
 
 This connection currently supports the local instance at `http://localhost:5173`.
 Shared remote team hosting needs the separate supported remote sign-in flow.
 Existing Codex sign-in credentials are not imported or reused.
 
-For API billing, explicitly select **API key — separate billing** in Profile.
-Flowsint then uses the configured Mistral or OpenAI provider and your Vault key.
-Supported settings are `LLM_PROVIDER` and `LLM_MODEL`; key names are
-`MISTRAL_API_KEY` and `OPENAI_API_KEY`. Selected graph context and your question
-are sent to the selected provider. Vault values are never included in evidence,
-and credential-like property fields are removed.
+An empty result does not establish absence; failed, partial or truncated steps
+need further review. Vault values are never included in evidence, and fields that
+look like credentials are removed before graph context is sent to the model.
 
-The local review setup uses GPT-6.1 Sol with medium reasoning effort:
+## Permissions and safety
 
-```env
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-6.1-sol
-LLM_REASONING_EFFORT=medium
-```
+Starting and cancelling a run require edit permission on the investigation.
+Readers can view runs. The API rechecks the selected entity IDs and the sketch
+scope.
 
-In API mode, add `OPENAI_API_KEY` to your Vault to enable model-backed runs. The
-reasoning setting applies to OpenAI planning, summaries, and chat. It does not
-enable additional execution tools or change the reviewed-plan workflow.
-
-In API mode without a configured model, the copilot offers type-based suggestions and factual
-run summaries, explicitly labelled **no LLM used**. These suggestions do not
-interpret the investigation question. Configured-provider failures are shown
-as errors, so they do not look like successful model responses.
-
-After execution, review the run statuses, outcome summaries, and result evidence.
-Model summaries cite their run IDs. An empty result does not establish absence;
-failed, partial, or truncated results require further review. You can save a
-summary as a draft case finding, with its evidence references and review decision
-set to pending.
-
-## Reuse and permissions
-
-**Save reviewed plan as flow** creates an ordinary flow recipe with input types
-and independent enrichment branches. It does not store the original entity IDs
-or values. It can be saved after execution, when enrichers have updated entity
-versions. The normal flow editor and launch controls remain available.
-
-Readers can generate plans and inspect accessible results. Running plans and
-saving recipes require edit permission on the source investigation. The API
-rechecks permissions, compatible entity types, selected IDs, and required key
-presence. Execution also checks entity versions: if a collaborator changed a
-selected entity after planning, generate a new plan before running it.
-
-The copilot has no arbitrary code, shell, Cypher, or URL execution tools. Provider
-and graph text is treated as evidence rather than instructions. Plans stay
-bounded to their reviewed selection; graph arrangement and defensive searches
-over imported telemetry are later capabilities. Final reports organize evidence
-by IP where attribution permits, separate observations from hypotheses, and
-retain collection gaps when saved as draft findings.
+The agent has no tools for arbitrary code, shell, Cypher or URL execution.
+Provider and graph text is treated as evidence, not as instructions. Each step
+is revalidated against the allowlist and restricted to compatible entities in the
+same sketch; the agent never reruns an enricher on the same entity.
