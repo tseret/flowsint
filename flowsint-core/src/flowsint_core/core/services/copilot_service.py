@@ -64,7 +64,8 @@ PASSIVE_ENRICHERS = {
     "website_to_domain": "website",
     "website_to_urlhaus": "website",
 }
-PASSIVE_PARAMS = {"ip_to_domains_virustotal": {"max_pages": 2}}
+# Params validate as strings (build_params_model); enrichers coerce.
+PASSIVE_PARAMS = {"ip_to_domains_virustotal": {"max_pages": "2"}}
 PASSIVE_KEYS = {
     "ip_to_ports_shodan": {"SHODAN_API_KEY"},
     "ip_to_ports_modat": {"MODAT_API_KEY"},

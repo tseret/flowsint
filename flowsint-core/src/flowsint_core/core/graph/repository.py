@@ -9,6 +9,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from pydantic_core import to_jsonable_python
+
 from .connection import Neo4jConnection
 from .types import GraphDict, NodeVersionConflict
 
@@ -125,7 +127,8 @@ class Neo4jGraphRepository:
                 },
                 str(node_type),
             )
-            identity = GraphSerializer.identity_properties(entity)
+            # Stored properties are JSON-mode; IPv4Network etc. are not Neo4j values.
+            identity = to_jsonable_python(GraphSerializer.identity_properties(entity))
         except (ValueError, TypeError):
             identity = {"nodeLabel": node_label}
         legacy_identity = {

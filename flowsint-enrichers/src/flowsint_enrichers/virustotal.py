@@ -19,7 +19,7 @@ PAGE_SCHEMA = {
     "name": "max_pages",
     "type": "number",
     "required": False,
-    "default": 5,
+    "default": "5",
     "description": "Maximum passive DNS pages per input (40 records/page, 1–25). Remaining pages are reported as truncated.",
 }
 
