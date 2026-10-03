@@ -5,6 +5,7 @@ import { Sparkles, Loader2 } from 'lucide-react'
 import { copilotService } from '@/api/copilot-service'
 import { chatGPTSubscriptionService } from '@/api/chatgpt-subscription-service'
 import { useGraphStore } from '@/stores/graph-store'
+import { useGraphControls } from '@/stores/graph-controls-store'
 import { usePermissions } from '@/hooks/use-can'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -27,6 +28,7 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const { canEdit } = usePermissions()
   const selected = useGraphStore((s) => s.selectedNodes)
   const queryClient = useQueryClient()
+  const refetchGraph = useGraphControls((s) => s.refetchGraph)
   const [open, setOpen] = useState(false)
   const [objective, setObjective] = useState('')
   const [maxSteps, setMaxSteps] = useState(20)
@@ -66,6 +68,12 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
       void queryClient.invalidateQueries({ queryKey: ['case-workspace'] })
     }
   }, [run?.status, run?.finding_ids.length, queryClient])
+
+  // Each finished step may add entities; show them on the canvas and in step labels.
+  const stepCount = run?.steps.length ?? 0
+  useEffect(() => {
+    if (stepCount) refetchGraph()
+  }, [stepCount, refetchGraph])
 
   async function start() {
     setBusy(true)
