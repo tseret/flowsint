@@ -131,6 +131,26 @@ def test_agent_broker_failure_keeps_no_run(client, db_session, backend):
     assert db_session.query(AgentRun).count() == 0
 
 
+def test_agent_start_caps_active_runs_but_ignores_dead_ones(
+    client, db_session, backend
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+
+    def start():
+        return client.post(
+            "/api/copilot/agent", headers=headers, json=_agent(sketch_id)
+        )
+
+    ids = [start().json()["id"] for _ in range(route.MAX_ACTIVE_AGENT_RUNS)]
+    refused = start()
+    assert refused.status_code == 429
+    assert db_session.query(AgentRun).count() == route.MAX_ACTIVE_AGENT_RUNS
+    # A run past Celery's hard limit belongs to a dead worker and frees its slot.
+    db_session.get(AgentRun, UUID(ids[0])).created_at = datetime(2020, 1, 1)
+    db_session.commit()
+    assert start().status_code == 201
+
+
 def test_agent_latest_run_and_cancel_only_while_running(client, db_session, backend):
     headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
     latest = f"/api/copilot/agent?sketch_id={sketch_id}"

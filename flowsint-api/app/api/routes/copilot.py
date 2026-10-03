@@ -1,7 +1,7 @@
 """Autonomous passive investigation agent and recorded-evidence review routes."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from typing import Any, cast
 from uuid import UUID
@@ -9,7 +9,7 @@ from uuid import UUID
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -71,6 +71,14 @@ class AgentStartRequest(BaseModel):
     node_ids: list[str] = Field(min_length=1, max_length=10)
     objective: str = Field(min_length=1, max_length=2000)
     max_steps: int = Field(default=20, ge=1, le=50)
+
+
+# Agent parents hold a worker thread while their enrichments run on the same
+# 10-thread worker; cap active runs so child tasks always get threads.
+# Runs older than Celery's 1 h hard limit are dead and do not count.
+# ponytail: count-then-insert can overshoot by a concurrent start; a dedicated
+# orchestration queue removes the cap if more parallel agents are needed.
+MAX_ACTIVE_AGENT_RUNS = 4
 
 
 def _check_sketch(db: Session, user: Profile, sketch_id: UUID, write: bool) -> None:
@@ -484,6 +492,18 @@ def start_agent(
         create_chat_service(db).get_subscription_provider(current_user.id)
     except (SubscriptionError, ValueError) as error:
         raise HTTPException(502, str(error)) from None
+    active = db.scalar(
+        select(func.count())
+        .select_from(AgentRun)
+        .where(
+            AgentRun.status.in_(("running", "publishing")),
+            AgentRun.created_at > datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+    )
+    if (active or 0) >= MAX_ACTIVE_AGENT_RUNS:
+        raise HTTPException(
+            429, "Too many investigation agents are running. Retry when one finishes."
+        )
     run = AgentRun(
         sketch_id=payload.sketch_id,
         owner_id=current_user.id,

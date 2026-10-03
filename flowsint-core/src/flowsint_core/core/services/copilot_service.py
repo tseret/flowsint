@@ -17,7 +17,6 @@ PASSIVE_ENRICHERS = {
     "asn_to_cidrs_ripestat": "asn",
     "cryptowallet_to_nfts": "cryptowallet",
     "cryptowallet_to_transactions": "cryptowallet",
-    "domain_to_asn": "domain",
     "domain_to_dehashed": "domain",
     "domain_to_history": "domain",
     "domain_to_ips_virustotal": "domain",
@@ -189,6 +188,8 @@ def validate_plan(
 
 def _safe_context(value: Any, depth: int = 0) -> tuple[Any, bool]:
     """Limit evidence and remove credential fields before provider submission."""
+    if isinstance(value, BaseModel):  # typed graph properties: redact their fields
+        value = value.model_dump(mode="json")
     if depth > 5:
         return "[nested context omitted]", True
     if isinstance(value, dict):
