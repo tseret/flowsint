@@ -933,3 +933,15 @@ def test_legacy_port_adoption_requires_matching_host_and_protocol():
         "nodeProperties.protocol": "tcp",
     }
     assert "legacy[key] = $legacy_identity[key]" in query
+
+
+def test_legacy_identity_uses_neo4j_compatible_values():
+    from flowsint_core.core.graph.serializer import GraphSerializer
+    from flowsint_types import CIDR
+
+    repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+    _, params = repo._build_node_query(
+        GraphSerializer.flowsint_type_to_neo4j_dict(CIDR(network="1.2.3.0/24")),
+        "sketch",
+    )
+    assert params["legacy_identity"] == {"nodeProperties.network": "1.2.3.0/24"}
