@@ -212,6 +212,19 @@ class ChatService(BaseService):
         api_key = self._vault_service.get_secret(owner_id, vault_key)
         return create_llm_provider(provider=provider_name, api_key=api_key)
 
+    def get_subscription_provider(self, owner_id: UUID) -> LLMProvider:
+        """ChatGPT subscription only: never falls back to a paid API key."""
+        from ..llm.providers.chatgpt_subscription import ChatGPTSubscriptionProvider
+        from .chatgpt_subscription_service import ChatGPTSubscriptionService
+
+        subscription = ChatGPTSubscriptionService(self._db).get_provider_data(owner_id)
+        if subscription is None:
+            raise SubscriptionError(
+                "The investigation agent requires ChatGPT subscription mode. "
+                "Switch it on in Profile. No paid API fallback was used."
+            )
+        return ChatGPTSubscriptionProvider(**subscription)
+
     async def stream_response(
         self,
         chat_id: UUID,

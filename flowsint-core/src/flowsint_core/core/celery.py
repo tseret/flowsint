@@ -11,6 +11,7 @@ celery = Celery(
         "flowsint_core.tasks.enricher",
         "flowsint_core.tasks.flow",
         "flowsint_core.tasks.diagnostics",
+        "flowsint_core.tasks.agent",
     ],
 )
 

@@ -149,6 +149,32 @@ class Scan(Base):
         return f"<Scan(id={self.id}, status={self.status})>"
 
 
+class AgentRun(Base):
+    """One autonomous passive investigation: objective, budget, steps, report."""
+
+    __tablename__ = "agent_runs"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    sketch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("sketches.id", ondelete="CASCADE"), index=True
+    )
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    objective: Mapped[str] = mapped_column(Text)
+    seed_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # running -> publishing -> completed; running -> cancelled; any active -> failed
+    status: Mapped[str] = mapped_column(String, default="running")
+    max_steps: Mapped[int] = mapped_column(Integer, default=20)
+    steps: Mapped[list] = mapped_column(JSON, default=list)
+    report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finding_ids: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class Sketch(Base):
     __tablename__ = "sketches"
 
