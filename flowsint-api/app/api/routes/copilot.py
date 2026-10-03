@@ -20,7 +20,7 @@ from flowsint_core.core.celery import celery
 from flowsint_core.core.graph import GraphNode, create_graph_service
 from flowsint_core.core.graph.serializer import GraphSerializer
 from flowsint_core.core.llm.protocol import LLMProvider, SubscriptionError
-from flowsint_core.core.models import Key, Profile, Scan
+from flowsint_core.core.models import CaseItem, Key, Profile, Scan, Sketch
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
     NotFoundError,
@@ -53,7 +53,7 @@ from flowsint_enrichers.ip.to_ports_modat import (
     lookup_recorded_fingerprint,
     recorded_fingerprint_query,
 )
-from flowsint_types import Domain, Ip
+from flowsint_types import Domain, Ip, Port
 
 router = APIRouter()
 
@@ -99,6 +99,13 @@ class ServiceContextRequest(BaseModel):
 class FingerprintRequest(ServiceContextRequest):
     service_version: int = Field(ge=0)
     fingerprint: str = Field(min_length=1, max_length=100)
+
+
+class FingerprintImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sketch_id: UUID
+    finding_id: UUID
+    finding_version: int = Field(ge=1)
 
 
 class SavePlan(CopilotPlan):
@@ -544,6 +551,155 @@ def query_recorded_service_fingerprint(
         raise HTTPException(
             502, "Modat returned an unusable service response."
         ) from None
+
+
+@router.post("/fingerprint/import")
+def import_fingerprint_candidate(
+    payload: FingerprintImportRequest,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, str]:
+    """Import one saved passive observation; never query the candidate host."""
+    _check_sketch(db, current_user, payload.sketch_id, write=True)
+    sketch = db.get(Sketch, payload.sketch_id)
+    finding = db.execute(
+        select(CaseItem).where(CaseItem.id == payload.finding_id).with_for_update()
+    ).scalar_one_or_none()
+    if (
+        not sketch
+        or not finding
+        or finding.investigation_id != sketch.investigation_id
+        or finding.sketch_id != payload.sketch_id
+        or finding.kind != "finding"
+        or finding.target_kind != "entity"
+    ):
+        raise HTTPException(404, "Candidate finding not found in this sketch")
+    if finding.version != payload.finding_version:
+        raise HTTPException(409, "Finding changed. Reload before importing.")
+    if finding.decision == "rejected":
+        raise HTTPException(409, "Rejected findings cannot be imported.")
+    try:
+        evidence = json.loads(finding.evidence)
+        source = evidence["source"]
+        candidate = evidence["candidate"]
+        if source["service_id"] != finding.target_id:
+            raise ValueError("Wrong finding target")
+        service = _service_context(
+            ServiceContextRequest(
+                sketch_id=payload.sketch_id, service_id=source["service_id"]
+            ),
+            db,
+            current_user,
+        )
+        if any(
+            source[key] != service[key]
+            for key in ("source_id", "host", "port", "transport", "service")
+        ):
+            raise ValueError("Source endpoint changed")
+        address = str(ip_address(candidate["ip"]))
+        if (
+            address == service["host"]
+            or type(candidate["port"]) is not int
+            or candidate["port"] != service["port"]
+            or candidate["transport"] != service["transport"].lower()
+            or candidate["protocol"] != service["service"].lower()
+        ):
+            raise ValueError("Different endpoint")
+        supported = [
+            field
+            for field, query in service["modat_queries"].items()
+            if query == evidence["query"]
+            and field in evidence["matching_fingerprints"]
+            and field in candidate["matching_fingerprints"]
+            and source["fingerprints"].get(field)
+            == candidate["fingerprints"].get(field)
+            == service["fingerprints"].get(field)
+        ]
+        if not supported:
+            raise ValueError("Fingerprint no longer matches")
+        ip = Ip(address=address)
+        port = Port(
+            host=address,
+            number=candidate["port"],
+            protocol=candidate["transport"],
+            service=candidate["protocol"],
+            banner=candidate.get("banner") or None,
+            fingerprints={
+                field: candidate["fingerprints"][field] for field in supported
+            },
+            provider="Modat",
+            observed_at=candidate.get("observed_at") or None,
+            retrieved_at=evidence["retrieved_at"],
+            source_ref=candidate.get("source_ref") or None,
+        )
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise HTTPException(
+            422,
+            "Finding lacks matching recorded service evidence. Review it before importing.",
+        ) from None
+    ip_props = GraphSerializer.flowsint_type_to_neo4j_dict(ip)
+    port_props = GraphSerializer.flowsint_type_to_neo4j_dict(port)
+    graph = create_graph_service(sketch_id=str(payload.sketch_id))
+    # One transaction, canonical identities, create-only properties: retries do not
+    # duplicate entities or overwrite newer enrichment already present in the graph.
+    rows = graph.query(
+        """MATCH (source:port)
+        WHERE elementId(source) = $source_id AND source.sketch_id = $sketch_id
+          AND source.deleted_at IS NULL AND coalesce(source.version, 0) = $source_version
+        OPTIONAL MATCH (old_ip:ip {sketch_id: $sketch_id})
+        WHERE old_ip.nodeKey = $ip_key OR
+          (old_ip.nodeKey IS NULL AND old_ip.`nodeProperties.address` = $address)
+        WITH source, head(collect(old_ip)) AS old_ip
+        OPTIONAL MATCH (old_port:port {sketch_id: $sketch_id})
+        WHERE old_port.nodeKey = $port_key OR
+          (old_port.nodeKey IS NULL AND old_port.`nodeProperties.host` = $address
+          AND old_port.`nodeProperties.number` = $port
+          AND coalesce(old_port.`nodeProperties.protocol`, 'tcp') = $transport)
+        WITH source, old_ip, head(collect(old_port)) AS old_port
+        WHERE (old_ip IS NULL OR old_ip.deleted_at IS NULL)
+          AND (old_port IS NULL OR old_port.deleted_at IS NULL)
+        FOREACH (old IN CASE WHEN old_ip IS NULL THEN [] ELSE [old_ip] END | SET old.nodeKey = $ip_key)
+        FOREACH (old IN CASE WHEN old_port IS NULL THEN [] ELSE [old_port] END | SET old.nodeKey = $port_key)
+        MERGE (ip:ip {nodeKey: $ip_key, sketch_id: $sketch_id})
+        ON CREATE SET ip += $ip_props, ip.version = 1, ip.x = 100, ip.y = 100
+        MERGE (service:port {nodeKey: $port_key, sketch_id: $sketch_id})
+        ON CREATE SET service += $port_props, service.version = 1, service.x = 100, service.y = 100
+        MERGE (ip)-[owns:HAS_PORT {sketch_id: $sketch_id}]->(service)
+        MERGE (source)-[match:SHARES_FINGERPRINT {sketch_id: $sketch_id}]->(service)
+        FOREACH (r IN [owns, match] |
+          SET r.deleted_at = null,
+              r.observations = CASE WHEN $observation IN coalesce(r.observations, [])
+                THEN coalesce(r.observations, []) ELSE coalesce(r.observations, []) + [$observation] END)
+        RETURN elementId(ip) AS ip_id, elementId(service) AS service_id,
+          elementId(source) AS source_service_id""",
+        {
+            "sketch_id": str(payload.sketch_id),
+            "source_id": service["service_id"],
+            "source_version": service["service_version"],
+            "address": address,
+            "port": port.number,
+            "transport": port.protocol,
+            "ip_key": ip_props["nodeKey"],
+            "port_key": port_props["nodeKey"],
+            "ip_props": ip_props,
+            "port_props": port_props,
+            "observation": json.dumps(
+                {
+                    "provider": "Modat",
+                    "finding_id": str(finding.id),
+                    "imported_by": str(current_user.id),
+                    "association": "unverified fingerprint similarity",
+                    "evidence": evidence,
+                },
+                sort_keys=True,
+            ),
+        },
+    )
+    if len(rows) != 1:
+        raise HTTPException(
+            409, "Graph entities changed or were deleted. Reload before importing."
+        )
+    return cast(dict[str, str], rows[0])
 
 
 @router.post("/save")

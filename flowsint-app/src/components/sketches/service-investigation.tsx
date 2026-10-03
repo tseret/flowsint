@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   copilotService,
   type CopilotServiceEvidence,
@@ -10,6 +10,7 @@ import { collaborationService, type CaseItem } from '@/api/collaboration-service
 import { sketchService } from '@/api/sketch-service'
 import { usePermissions } from '@/hooks/use-can'
 import { Button } from '@/components/ui/button'
+import { queryKeys } from '@/api/query-keys'
 
 export function fingerprintFinding(
   sketchId: string,
@@ -91,6 +92,79 @@ export function matchingFingerprintFinding(items: CaseItem[], finding: Partial<C
       item.target_kind === 'entity' &&
       item.target_id === finding.target_id &&
       item.evidence === finding.evidence
+  )
+}
+
+export function isFingerprintFinding(item: CaseItem) {
+  if (item.kind !== 'finding' || item.target_kind !== 'entity' || !item.sketch_id) return false
+  try {
+    const evidence = JSON.parse(item.evidence)
+    return (
+      typeof evidence.query === 'string' &&
+      evidence.source?.service_id === item.target_id &&
+      typeof evidence.candidate?.ip === 'string' &&
+      Array.isArray(evidence.matching_fingerprints)
+    )
+  } catch {
+    return false
+  }
+}
+
+export function FingerprintImportButton({ finding }: { finding: CaseItem }) {
+  const { canEdit } = usePermissions()
+  const client = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const [imported, setImported] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  async function add() {
+    if (!canEdit || busy || imported || !finding.sketch_id || finding.decision === 'rejected')
+      return
+    setBusy(true)
+    setError(null)
+    try {
+      const sketch = await sketchService.getById(finding.sketch_id)
+      await copilotService.importFingerprint({
+        sketch_id: finding.sketch_id,
+        finding_id: finding.id,
+        finding_version: finding.version
+      })
+      setImported(true)
+      await Promise.all([
+        client.invalidateQueries({
+          queryKey: queryKeys.sketches.graph(sketch.investigation_id, finding.sketch_id)
+        }),
+        client.invalidateQueries({
+          queryKey: ['investigations', sketch.investigation_id, 'graph', finding.sketch_id, 'data']
+        }),
+        client.invalidateQueries({ queryKey: ['case-workspace', sketch.investigation_id] })
+      ])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to import saved candidate evidence')
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (!canEdit || !isFingerprintFinding(finding) || finding.decision === 'rejected') return null
+  return (
+    <div className="space-y-1">
+      <Button variant="outline" size="sm" disabled={busy || imported} onClick={add}>
+        {busy
+          ? 'Adding saved evidence…'
+          : imported
+            ? 'Candidate added to graph'
+            : 'Add candidate to graph'}
+      </Button>
+      {imported && (
+        <p aria-live="polite" className="text-sm">
+          Candidate IP and service added from the saved evidence. Review decision unchanged.
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -286,6 +360,7 @@ export function ServiceInvestigation({
                 {saved[evidence] && (
                   <p aria-live="polite">Saved finding: {saved[evidence].decision}</p>
                 )}
+                {saved[evidence] && <FingerprintImportButton finding={saved[evidence]} />}
                 {canEdit && (
                   <Button
                     variant="outline"

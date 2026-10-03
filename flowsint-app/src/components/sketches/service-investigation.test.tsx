@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ServiceInvestigation,
   fingerprintFinding,
-  matchingFingerprintFinding
+  matchingFingerprintFinding,
+  isFingerprintFinding,
+  FingerprintImportButton
 } from './service-investigation'
 import {
   copilotService,
@@ -12,6 +14,7 @@ import {
 } from '@/api/copilot-service'
 import { usePermissions } from '@/hooks/use-can'
 import type { CaseItem } from '@/api/collaboration-service'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 vi.mock('@/hooks/use-can', () => ({ usePermissions: vi.fn(() => ({ canEdit: false })) }))
 
@@ -54,6 +57,69 @@ const result: FingerprintResult = {
 }
 
 describe('passive indexed service review', () => {
+  it('does not offer graph import for a rejected finding', () => {
+    vi.mocked(usePermissions).mockReturnValueOnce({ canEdit: true } as ReturnType<
+      typeof usePermissions
+    >)
+    const item = {
+      ...fingerprintFinding('sketch', result, result.matches[0]),
+      id: 'saved',
+      version: 4,
+      decision: 'rejected'
+    } as CaseItem
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <FingerprintImportButton finding={item} />
+      </QueryClientProvider>
+    )
+    expect(html).not.toContain('Add candidate to graph')
+  })
+  it('renders an explicit saved-finding import action without importing or querying providers', () => {
+    vi.mocked(usePermissions).mockReturnValueOnce({ canEdit: true } as ReturnType<
+      typeof usePermissions
+    >)
+    const item = {
+      ...fingerprintFinding('sketch', result, result.matches[0]),
+      id: 'saved',
+      version: 3,
+      decision: 'pending'
+    } as CaseItem
+    const importer = vi.spyOn(copilotService, 'importFingerprint')
+    const lookup = vi.spyOn(copilotService, 'fingerprint')
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <FingerprintImportButton finding={item} />
+      </QueryClientProvider>
+    )
+    expect(html).toContain('Add candidate to graph')
+    expect(importer).not.toHaveBeenCalled()
+    expect(lookup).not.toHaveBeenCalled()
+    expect(item.decision).toBe('pending')
+    importer.mockRestore()
+    lookup.mockRestore()
+  })
+  it('offers saved-evidence imports only for fingerprint findings on their source service', () => {
+    const finding = {
+      ...fingerprintFinding('sketch', result, result.matches[0]),
+      id: 'saved',
+      version: 3,
+      decision: 'pending'
+    } as CaseItem
+    expect(isFingerprintFinding(finding)).toBe(true)
+    expect(isFingerprintFinding({ ...finding, kind: 'comment' })).toBe(false)
+    expect(isFingerprintFinding({ ...finding, target_id: 'unrelated-ip' })).toBe(false)
+    expect(isFingerprintFinding({ ...finding, evidence: 'not JSON' })).toBe(false)
+    expect(
+      isFingerprintFinding({
+        ...finding,
+        evidence: JSON.stringify({
+          query: 'query',
+          source: { service_id: finding.target_id },
+          candidate: {}
+        })
+      })
+    ).toBe(false)
+  })
   it('shows exact query, recorded context and disabled lookup for readers without running a search', () => {
     const lookup = vi.spyOn(copilotService, 'fingerprint')
     const html = renderToStaticMarkup(<ServiceInvestigation sketchId="sketch" service={service} />)

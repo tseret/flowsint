@@ -25,6 +25,14 @@ const plan: CopilotPlan = {
 }
 
 describe('reviewed copilot plan', () => {
+  it('imports only a saved finding ID and exact version without sending a provider query', async () => {
+    const request = { sketch_id: 'sketch', finding_id: 'finding', finding_version: 4 }
+    await copilotService.importFingerprint(request)
+    expect(fetchWithAuth).toHaveBeenLastCalledWith('/api/copilot/fingerprint/import', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    })
+  })
   it('loads stored service context separately from an explicit versioned fingerprint lookup', async () => {
     await copilotService.serviceContext({ sketch_id: 'sketch', service_id: 'port' })
     expect(fetchWithAuth).toHaveBeenLastCalledWith('/api/copilot/service-context', {

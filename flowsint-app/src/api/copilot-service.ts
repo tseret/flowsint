@@ -80,6 +80,19 @@ export type CopilotSummary = {
 }
 
 export const copilotService = {
+  importFingerprint: (body: {
+    sketch_id: string
+    finding_id: string
+    finding_version: number
+  }): Promise<{
+    ip_id: string
+    service_id: string
+    source_service_id: string
+  }> =>
+    fetchWithAuth('/api/copilot/fingerprint/import', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }),
   serviceContext: (body: {
     sketch_id: string
     service_id: string
