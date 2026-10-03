@@ -44,7 +44,7 @@ Use a private, encrypted backup destination. Never commit backups or `.env`.
 umask 077
 backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup_dir"
-docker compose -f docker-compose.prod.yml stop app api celery
+docker compose -f docker-compose.prod.yml stop app api celery celery-agents
 docker compose -f docker-compose.prod.yml stop neo4j
 docker compose -f docker-compose.prod.yml exec -T postgres sh -c \
   'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \

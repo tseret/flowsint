@@ -14,6 +14,10 @@ services:
     image: flowsint-api:${FLOWSINT_BUILD_REVISION:?Set FLOWSINT_BUILD_REVISION to the git revision}
     group_add:
       - "${DOCKER_SOCKET_GID:-0}"
+  celery-agents:
+    image: flowsint-api:${FLOWSINT_BUILD_REVISION:?Set FLOWSINT_BUILD_REVISION to the git revision}
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
   app:
     image: flowsint-app:${FLOWSINT_BUILD_REVISION:?Set FLOWSINT_BUILD_REVISION to the git revision}
     build:
