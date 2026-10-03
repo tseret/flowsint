@@ -142,10 +142,12 @@ api:
 frontend:
 	cd $(PROJECT_ROOT)/flowsint-app && yarn dev
 
+# ponytail: one local worker serves both queues; agents can then compete with
+# their own lookups for threads. Production runs a separate celery-agents worker.
 celery:
 	cd $(PROJECT_ROOT)/flowsint-api && \
 	uv run celery -A flowsint_core.core.celery \
-	worker --loglevel=info --pool=threads --concurrency=10
+	worker --loglevel=info --pool=threads --concurrency=10 -Q celery,agents
 
 test:
 	cd flowsint-types && uv run pytest

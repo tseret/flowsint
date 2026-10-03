@@ -70,10 +70,11 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   }, [run?.status, run?.finding_ids.length, queryClient])
 
   // Each finished step may add entities; show them on the canvas and in step labels.
-  const stepCount = run?.steps.length ?? 0
+  // Steps are saved as 'running' before their scan ends; refresh once each finishes.
+  const finishedSteps = run?.steps.filter((step) => step.outcome !== 'running').length ?? 0
   useEffect(() => {
-    if (stepCount) refetchGraph()
-  }, [stepCount, refetchGraph])
+    if (finishedSteps) refetchGraph()
+  }, [run?.id, finishedSteps, refetchGraph])
 
   async function start() {
     setBusy(true)
