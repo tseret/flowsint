@@ -229,6 +229,7 @@ class GraphSerializer:
             source=str(edge_dict.get("source")),
             target=str(edge_dict.get("target")),
             label=str(edge_dict.get("type")),
+            caption=(edge_dict.get("data") or {}).get("caption"),
             observations=[
                 json.loads(value)
                 for value in (edge_dict.get("data") or {}).get("observations", [])

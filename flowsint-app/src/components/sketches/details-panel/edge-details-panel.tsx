@@ -4,6 +4,7 @@ import { Trash2, ArrowRight, MousePointer, Link2 } from 'lucide-react'
 import { useGraphStore } from '@/stores/graph-store'
 import { useParams } from '@tanstack/react-router'
 import { toast } from 'sonner'
+import { fingerprintPivotEvidence } from '@/lib/graph-presentation'
 import { useIcon } from '@/hooks/use-icon'
 import { useConfirm } from '@/components/use-confirm-dialog'
 import { usePermissions } from '@/hooks/use-can'
@@ -14,6 +15,61 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { CaseWorkspace } from '@/components/dashboard/investigation/case-workspace'
+
+export function FingerprintPivotDetails({ observation }: { observation: unknown }) {
+  const pivot = fingerprintPivotEvidence(observation)
+  if (!pivot) return null
+  const text = (value: unknown) =>
+    typeof value === 'string' || typeof value === 'number' ? String(value) : 'Not recorded'
+  return (
+    <section className="space-y-2 break-words">
+      <h4 className="font-semibold">Unverified fingerprint pivot</h4>
+      <p>
+        {text(pivot.source.host)}:{text(pivot.source.port)} / {text(pivot.source.transport)} ·{' '}
+        {text(pivot.source.service)} → {text(pivot.candidate.ip)}:{text(pivot.candidate.port)} /{' '}
+        {text(pivot.candidate.transport)} · {text(pivot.candidate.protocol)}
+      </p>
+      <p>Source service: {text(pivot.source.service_id)}</p>
+      <p>
+        Retrieved: {text(pivot.evidence.retrieved_at)} · Source observed:{' '}
+        {text(pivot.source.observed_at)} · Candidate observed: {text(pivot.candidate.observed_at)}
+      </p>
+      <p>
+        Source reference: {text(pivot.source.source_ref)} · Candidate reference:{' '}
+        {text(pivot.candidate.source_ref)}
+      </p>
+      <p className="font-medium">Exact indexed query</p>
+      <pre className="whitespace-pre-wrap break-all">{text(pivot.evidence.query)}</pre>
+      <p>
+        Matching fingerprints:{' '}
+        {Array.isArray(pivot.evidence.matching_fingerprints)
+          ? pivot.evidence.matching_fingerprints
+              .filter((name) => typeof name === 'string')
+              .join(', ')
+          : 'Not recorded'}
+      </p>
+      <details>
+        <summary className="cursor-pointer">Hash comparison and recorded banners</summary>
+        <p className="font-medium mt-2">Source fingerprints</p>
+        <pre className="whitespace-pre-wrap break-all">
+          {JSON.stringify(pivot.source.fingerprints, null, 2)}
+        </pre>
+        <p className="font-medium">Candidate fingerprints</p>
+        <pre className="whitespace-pre-wrap break-all">
+          {JSON.stringify(pivot.candidate.fingerprints, null, 2)}
+        </pre>
+        <p className="font-medium">Source banner</p>
+        <pre className="whitespace-pre-wrap break-all">{text(pivot.source.banner)}</pre>
+        <p className="font-medium">Candidate banner</p>
+        <pre className="whitespace-pre-wrap break-all">{text(pivot.candidate.banner)}</pre>
+      </details>
+      <p className="text-muted-foreground">
+        Fingerprint similarity can reflect common software or configuration. It does not establish
+        common control.
+      </p>
+    </section>
+  )
+}
 
 const EdgeDetailsPanel = memo(() => {
   const { canEdit } = usePermissions()
@@ -31,12 +87,12 @@ const EdgeDetailsPanel = memo(() => {
   const sourceNode = edge ? nodes.find((n) => n.id === edge.source) : null
   const targetNode = edge ? nodes.find((n) => n.id === edge.target) : null
 
-  const SourceIcon = useIcon(sourceNode?.nodeType ?? 'default', {
+  const renderSourceIcon = useIcon(sourceNode?.nodeType ?? 'default', {
     nodeColor: sourceNode?.nodeColor,
     nodeIcon: sourceNode?.nodeIcon,
     nodeImage: sourceNode?.nodeImage
   })
-  const TargetIcon = useIcon(targetNode?.nodeType ?? 'default', {
+  const renderTargetIcon = useIcon(targetNode?.nodeType ?? 'default', {
     nodeColor: targetNode?.nodeColor,
     nodeIcon: targetNode?.nodeIcon,
     nodeImage: targetNode?.nodeImage
@@ -188,7 +244,7 @@ const EdgeDetailsPanel = memo(() => {
               className="flex-1 flex items-center gap-2 p-2 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors group min-w-0"
             >
               <div className="flex items-center justify-center w-6 h-6 rounded-full bg-background shrink-0">
-                <SourceIcon className="h-3 w-3" />
+                {renderSourceIcon({ className: 'h-3 w-3' })}
               </div>
               <div className="flex-1 min-w-0 text-left">
                 <p className="text-[10px] text-muted-foreground mb-0.5">Source</p>
@@ -206,7 +262,7 @@ const EdgeDetailsPanel = memo(() => {
               className="flex-1 flex items-center gap-2 p-2 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors group min-w-0"
             >
               <div className="flex items-center justify-center w-6 h-6 rounded-full bg-background shrink-0">
-                <TargetIcon className="h-3 w-3" />
+                {renderTargetIcon({ className: 'h-3 w-3' })}
               </div>
               <div className="flex-1 min-w-0 text-left">
                 <p className="text-[10px] text-muted-foreground mb-0.5">Target</p>
@@ -227,11 +283,12 @@ const EdgeDetailsPanel = memo(() => {
                 No source observations recorded for this relationship.
               </p>
             )}
-            {edge.observations?.map((observation, index) => (
+            {edge.observations?.filter(Boolean).map((observation, index) => (
               <article
                 key={`${observation.scan_id}-${index}`}
                 className="rounded border p-2 space-y-1 break-words"
               >
+                <FingerprintPivotDetails observation={observation} />
                 <p>{observation.provider || observation.enricher || 'Unknown provider'}</p>
                 {observation.observed_at && <p>Observed: {observation.observed_at}</p>}
                 {observation.retrieved_at && <p>Retrieved: {observation.retrieved_at}</p>}

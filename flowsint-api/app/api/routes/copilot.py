@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from datetime import datetime, timezone
 from ipaddress import ip_address
 from typing import Any, cast
 from uuid import UUID
@@ -643,19 +644,21 @@ def import_fingerprint_candidate(
     # One transaction, canonical identities, create-only properties: retries do not
     # duplicate entities or overwrite newer enrichment already present in the graph.
     rows = graph.query(
-        """MATCH (source:port)
+        """MATCH (source:port)<-[owner:HAS_PORT]-(source_ip:ip)
         WHERE elementId(source) = $source_id AND source.sketch_id = $sketch_id
           AND source.deleted_at IS NULL AND coalesce(source.version, 0) = $source_version
+          AND elementId(source_ip) = $source_ip_id AND source_ip.sketch_id = $sketch_id
+          AND source_ip.deleted_at IS NULL AND owner.deleted_at IS NULL
         OPTIONAL MATCH (old_ip:ip {sketch_id: $sketch_id})
         WHERE old_ip.nodeKey = $ip_key OR
           (old_ip.nodeKey IS NULL AND old_ip.`nodeProperties.address` = $address)
-        WITH source, head(collect(old_ip)) AS old_ip
+        WITH source, source_ip, head(collect(old_ip)) AS old_ip
         OPTIONAL MATCH (old_port:port {sketch_id: $sketch_id})
         WHERE old_port.nodeKey = $port_key OR
           (old_port.nodeKey IS NULL AND old_port.`nodeProperties.host` = $address
           AND old_port.`nodeProperties.number` = $port
           AND coalesce(old_port.`nodeProperties.protocol`, 'tcp') = $transport)
-        WITH source, old_ip, head(collect(old_port)) AS old_port
+        WITH source, source_ip, old_ip, head(collect(old_port)) AS old_port
         WHERE (old_ip IS NULL OR old_ip.deleted_at IS NULL)
           AND (old_port IS NULL OR old_port.deleted_at IS NULL)
         FOREACH (old IN CASE WHEN old_ip IS NULL THEN [] ELSE [old_ip] END | SET old.nodeKey = $ip_key)
@@ -665,16 +668,28 @@ def import_fingerprint_candidate(
         MERGE (service:port {nodeKey: $port_key, sketch_id: $sketch_id})
         ON CREATE SET service += $port_props, service.version = 1, service.x = 100, service.y = 100
         MERGE (ip)-[owns:HAS_PORT {sketch_id: $sketch_id}]->(service)
-        MERGE (source)-[match:SHARES_FINGERPRINT {sketch_id: $sketch_id}]->(service)
+        MERGE (source_ip)-[match:SHARES_FINGERPRINT {sketch_id: $sketch_id}]->(ip)
+        SET match.caption = CASE WHEN match.caption IS NULL OR match.caption = $caption
+          THEN $caption ELSE 'Shared service fingerprints' END
         FOREACH (r IN [owns, match] |
           SET r.deleted_at = null,
               r.observations = CASE WHEN $observation IN coalesce(r.observations, [])
                 THEN coalesce(r.observations, []) ELSE coalesce(r.observations, []) + [$observation] END)
+        WITH source, source_ip, ip, service, match
+        OPTIONAL MATCH (source)-[legacy:SHARES_FINGERPRINT {sketch_id: $sketch_id}]->(service)
+        WHERE legacy.deleted_at IS NULL
+        WITH source, source_ip, ip, service, match, collect(legacy) AS legacy_links
+        FOREACH (legacy IN legacy_links |
+          SET match.observations = reduce(observations = coalesce(match.observations, []),
+            observation IN coalesce(legacy.observations, []) |
+            CASE WHEN observation IN observations THEN observations ELSE observations + [observation] END)
+          SET legacy.deleted_at = $migrated_at)
         RETURN elementId(ip) AS ip_id, elementId(service) AS service_id,
           elementId(source) AS source_service_id""",
         {
             "sketch_id": str(payload.sketch_id),
             "source_id": service["service_id"],
+            "source_ip_id": service["source_id"],
             "source_version": service["service_version"],
             "address": address,
             "port": port.number,
@@ -683,6 +698,8 @@ def import_fingerprint_candidate(
             "port_key": port_props["nodeKey"],
             "ip_props": ip_props,
             "port_props": port_props,
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+            "caption": f"Shared {service['service'].upper()} {supported[0].split('.')[-1].upper()} · port {port.number}",
             "observation": json.dumps(
                 {
                     "provider": "Modat",

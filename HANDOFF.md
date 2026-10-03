@@ -264,3 +264,11 @@ Done:
 
 Next:
 - Reload Hexanet’s graph to inspect the imported candidates. Saved findings now offer Add candidate to graph; review decisions remain separate human actions. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-03 — direct fingerprint pivots and expandable services
+Done:
+- Changed saved-finding import to connect source IP directly to candidate IP, with a readable service/fingerprint caption and exact saved evidence. Existing Port nodes and HAS_PORT ownership stay intact. Explicit reimport copies historical observations to the direct edge and soft-deletes the legacy service-to-service link.
+- Source IP ownership and service version are checked in the graph write. Canonical nodes, enrichment properties, observation deduplication and pending review decisions remain preserved. No provider or LLM request is needed.
+- Reproduced the current live layout: three candidate IPs exist, connected through three legacy Port-to-Port fingerprint links. Backend Python suites and focused mypy pass.
+Next:
+- Finish compact graph presentation and service expansion, verify all required checks, apply matching local images sequentially, and update the three saved Hexanet matches to direct links. Record live results before publishing. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.

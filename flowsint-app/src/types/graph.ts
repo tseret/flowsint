@@ -84,6 +84,9 @@ export type EvidenceObservation = {
   retrieved_at?: string
   observed_at?: string
   source_ref?: string
+  finding_id?: string
+  association?: string
+  evidence?: unknown
 }
 
 // The imperative handle exposed by <ForceGraph2D<GraphNode, GraphEdge>

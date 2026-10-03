@@ -112,6 +112,8 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
   const { id: sketchId } = useParams({ strict: false })
   const view = useGraphControls((s) => s.view)
   const setView = useGraphControls((s) => s.setView)
+  const showPivotServices = useGraphControls((s) => s.showPivotServices)
+  const setShowPivotServices = useGraphControls((s) => s.setShowPivotServices)
   const zoomToFit = useGraphControls((s) => s.zoomToFit)
   const zoomToSelection = useGraphControls((s) => s.zoomToSelection)
   const zoomIn = useGraphControls((s) => s.zoomIn)
@@ -371,6 +373,17 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
             toggled={hasFilters}
           />
         </Filters>
+        {view === 'graph' && (
+          <Button
+            size="sm"
+            variant={showPivotServices ? 'secondary' : 'ghost'}
+            className="h-7"
+            aria-pressed={showPivotServices}
+            onClick={() => setShowPivotServices(!showPivotServices)}
+          >
+            Show pivot services
+          </Button>
+        )}
       </FloatingBar>
 
       {/* Top right: Status, Export, Reload */}

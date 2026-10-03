@@ -1068,6 +1068,11 @@ def test_import_saved_fingerprint_adds_host_specific_service_and_evidence(
     query, params = graph.query.call_args.args
     assert "ON CREATE SET service += $port_props" in query
     assert "SHARES_FINGERPRINT" in query and "HAS_PORT" in query
+    assert "MERGE (source_ip)-[match:SHARES_FINGERPRINT" in query
+    assert "SET legacy.deleted_at = $migrated_at" in query
+    assert "observation IN coalesce(legacy.observations, [])" in query
+    assert params["source_ip_id"] == "ip-1"
+    assert params["caption"] == "Shared SSH HASSH · port 22"
     assert params["port_props"]["nodeProperties.host"] == "192.0.2.2"
     assert params["port_props"]["nodeProperties.fingerprints.ssh.hassh"] == "ab" * 16
     assert params["source_id"] == "service-22" and params["source_version"] == 3

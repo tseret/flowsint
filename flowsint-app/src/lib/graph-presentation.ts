@@ -27,11 +27,134 @@ export function graphChanges(
         const old = oldEdges.get(edge.id)
         return (
           old &&
-          JSON.stringify([old.label, old.observations]) !==
-            JSON.stringify([edge.label, edge.observations])
+          JSON.stringify([old.label, old.caption, old.observations]) !==
+            JSON.stringify([edge.label, edge.caption, edge.observations])
         )
       })
       .map((edge) => edge.id)
+  }
+}
+
+const record = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+
+export function fingerprintPivotEvidence(observation: unknown) {
+  const evidence = record(record(observation)?.evidence)
+  const source = record(evidence?.source)
+  const candidate = record(evidence?.candidate)
+  return evidence && source && candidate ? { evidence, source, candidate } : null
+}
+
+export const edgeDisplayLabel = (edge: Pick<GraphEdge, 'label' | 'caption'>) =>
+  edge.caption || edge.label
+
+export function compactPivotGraph(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  {
+    expanded = false,
+    selectedNodeIds = [],
+    selectedEdgeIds = []
+  }: { expanded?: boolean; selectedNodeIds?: string[]; selectedEdgeIds?: string[] } = {}
+) {
+  if (expanded) return { nodes, edges }
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const protectedIds = new Set(selectedNodeIds)
+  const selectedEdges = new Set(selectedEdgeIds)
+  const owners = new Map<string, string[]>()
+  const incident = new Map<string, GraphEdge[]>()
+  for (const edge of edges) {
+    for (const id of [edge.source, edge.target]) {
+      const list = incident.get(id) ?? []
+      list.push(edge)
+      incident.set(id, list)
+      if (selectedEdges.has(edge.id)) protectedIds.add(id)
+    }
+    if ((edge.type || edge.label) === 'HAS_PORT') {
+      const list = owners.get(edge.target) ?? []
+      list.push(edge.source)
+      owners.set(edge.target, list)
+    }
+  }
+  const hidden = new Set<string>()
+  const ownedPorts = new Map<string, GraphNode[]>()
+  for (const node of nodes) {
+    const owner = owners.get(node.id)
+    if (node.nodeType.toLowerCase() !== 'port' || owner?.length !== 1) continue
+    const list = ownedPorts.get(owner[0]) ?? []
+    list.push(node)
+    ownedPorts.set(owner[0], list)
+  }
+  const normalize = (value: unknown) => (typeof value === 'string' ? value.toLowerCase() : '')
+  function matchesService(
+    port: GraphNode | undefined,
+    owner: GraphNode,
+    endpoint: Record<string, unknown>
+  ) {
+    return (
+      typeof endpoint.transport === 'string' &&
+      !!endpoint.transport &&
+      typeof endpoint.service === 'string' &&
+      !!endpoint.service &&
+      Number.isInteger(Number(endpoint.port)) &&
+      Number(endpoint.port) > 0 &&
+      Number(endpoint.port) <= 65535 &&
+      port?.nodeType.toLowerCase() === 'port' &&
+      owners.get(port.id)?.length === 1 &&
+      owners.get(port.id)?.[0] === owner.id &&
+      port.nodeProperties.host === owner.nodeProperties.address &&
+      endpoint.host === owner.nodeProperties.address &&
+      Number(port.nodeProperties.number) === Number(endpoint.port) &&
+      normalize(port.nodeProperties.protocol) === normalize(endpoint.transport) &&
+      normalize(port.nodeProperties.service) === normalize(endpoint.service)
+    )
+  }
+  function hide(port: GraphNode) {
+    if (
+      !protectedIds.has(port.id) &&
+      incident.get(port.id)?.every((edge) => (edge.type || edge.label) === 'HAS_PORT')
+    )
+      hidden.add(port.id)
+  }
+  for (const edge of edges) {
+    if ((edge.type || edge.label) !== 'SHARES_FINGERPRINT') continue
+    const sourceIP = byId.get(edge.source),
+      candidateIP = byId.get(edge.target)
+    if (sourceIP?.nodeType.toLowerCase() !== 'ip' || candidateIP?.nodeType.toLowerCase() !== 'ip')
+      continue
+    for (const observation of edge.observations ?? []) {
+      const pivot = fingerprintPivotEvidence(observation)
+      if (
+        !pivot ||
+        typeof pivot.source.service_id !== 'string' ||
+        typeof pivot.candidate.ip !== 'string'
+      )
+        continue
+      const sourcePort = byId.get(pivot.source.service_id)
+      if (
+        !matchesService(sourcePort, sourceIP, pivot.source) ||
+        pivot.candidate.ip !== candidateIP.nodeProperties.address
+      )
+        continue
+      const endpoint = {
+        host: pivot.candidate.ip,
+        port: pivot.candidate.port,
+        transport: pivot.candidate.transport,
+        service: pivot.candidate.protocol
+      }
+      const candidatePorts = (ownedPorts.get(candidateIP.id) ?? []).filter((node) =>
+        matchesService(node, candidateIP, endpoint)
+      )
+      if (candidatePorts.length !== 1 || !sourcePort) continue
+      hide(sourcePort)
+      hide(candidatePorts[0])
+    }
+  }
+  return {
+    nodes: nodes.filter((node) => !hidden.has(node.id)),
+    edges: edges.filter((edge) => !hidden.has(edge.source) && !hidden.has(edge.target))
   }
 }
 
