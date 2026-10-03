@@ -285,7 +285,12 @@ Done:
 - Live smoke test in a throwaway sketch, since deleted:
   - Run 1 found 3 bugs from this branch, all now fixed with a regression test. (1) `max_pages` failed validation because `build_params_model` types every param as `str`. (2) CIDR enrichers crashed because legacy identity passed a raw `IPv4Network` to Neo4j; it is now JSON-normalized. (3) The canvas did not refresh as agent steps finished; it now refetches after each step.
   - Run 2 completed 5 steps: VirusTotal 45, InternetDB, RIPEstat ASN, Shodan ports. It added 176 nodes and 4 pending findings, and the UI rendered the report.
-- Applied images v1.2.12-117-g4ea59a9e (api/worker) and v1.2.12-119-gd029c153 (frontend); all containers healthy, migration at head.
+- Review fixes:
+  - Typed node properties are now redacted before reaching the prompt.
+  - `domain_to_asn` was dropped from the allowlist because it performs live DNS.
+  - Agent parents now run on a dedicated `agents` queue served by the new `celery-agents` service (`-Q agents --concurrency=4`), so child `run_enricher` tasks never wait behind them. This replaced an admission cap and an in-process enrichment attempt; both failed review.
+- Applied images v1.2.12-124-gf0f8745d (api, celery, celery-agents, app). Smoke run on 31.222.235.175: the agent ran on celery-agents, InternetDB and VirusTotal lookups ran on celery, and the run completed with a cited report and 2 pending findings.
 
 Next:
+- Any deploy must also start the `celery-agents` service; without it, agent runs stay queued.
 - Select 1–10 entities in a sketch, click Investigate selected entities, enter an objective and run. Review the draft findings in the case workspace. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
