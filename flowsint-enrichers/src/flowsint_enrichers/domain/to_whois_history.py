@@ -7,7 +7,6 @@ from tools.network.whoisxml import WhoisXmlTool
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
-from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.address import Location
 from flowsint_types.domain import Domain
@@ -25,21 +24,6 @@ class DomainToWhoisHistoryEnricher(Enricher):
 
     InputType = Domain
     OutputType = Whois
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault: Optional[VaultProtocol] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def required_params(cls) -> bool:
@@ -64,10 +48,6 @@ class DomainToWhoisHistoryEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Domain"
-
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Fetch WHOIS history records for domains using WhoisXML API."""

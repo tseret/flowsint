@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
@@ -14,7 +14,7 @@ class DomainToRootDomain(Enricher):
     InputType = Domain
     OutputType = Domain
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         # Store mapping between original domains and their root domains
         self.domain_root_mapping: List[tuple[Domain, Domain]] = []
@@ -26,10 +26,6 @@ class DomainToRootDomain(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Domain"
-
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []

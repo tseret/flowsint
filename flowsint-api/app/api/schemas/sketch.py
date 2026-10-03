@@ -18,7 +18,7 @@ class SketchCreate(BaseModel):
 class SketchRead(ORMBase):
     id: UUID4
     title: str
-    description: str
+    description: str | None
     created_at: datetime
     owner_id: Optional[UUID4]
     investigation_id: UUID4

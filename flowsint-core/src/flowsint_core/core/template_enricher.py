@@ -143,6 +143,10 @@ class TemplateEnricher(Enricher):
             if value is not None:
                 self._resolved_secrets[f"secrets.{secret.name}"] = value
             elif secret.required:
+                self.report_issue(
+                    "missing_credentials",
+                    f"Required secret '{secret.name}' is not configured",
+                )
                 raise TemplateEnricherError(
                     f"Required secret '{secret.name}' not found in vault"
                 )
@@ -445,11 +449,17 @@ class TemplateEnricher(Enricher):
                     try:
                         results.append(self._build_mapped_result(item))
                     except Exception as e:
+                        self.report_issue(
+                            "failed", "Failed to map provider response item"
+                        )
                         Logger.info(
                             self.sketch_id,
                             {"message": f"Failed to map array item: {e}"},
                         )
             else:
+                self.report_issue(
+                    "failed", "Provider response was not an expected array"
+                )
                 Logger.info(
                     self.sketch_id,
                     {
@@ -473,25 +483,41 @@ class TemplateEnricher(Enricher):
             List of OutputType instances
         """
         results: List[Any] = []
+        self._input_result_pairs: List[tuple[Any, Any]] = []
 
         async with httpx.AsyncClient() as client:
             for input_obj in values:
                 try:
                     item_results = await self._process_single_input(client, input_obj)
                     results.extend(item_results)
+                    self._input_result_pairs.extend(
+                        (input_obj, item) for item in item_results
+                    )
                 except SSRFError as e:
+                    self.report_issue("failed", "Request blocked by SSRF protection")
                     Logger.info(
                         self.sketch_id,
                         {"message": f"SSRF blocked: {e}"},
                     )
                     continue
                 except TemplateRenderError as e:
+                    self.report_issue("failed", "Template render failed")
                     Logger.info(
                         self.sketch_id,
                         {"message": f"Template render error: {e}"},
                     )
                     continue
                 except httpx.HTTPStatusError as e:
+                    outcome = (
+                        "quota_exceeded"
+                        if e.response.status_code == 429
+                        else "missing_credentials"
+                        if e.response.status_code in (401, 403)
+                        else "failed"
+                    )
+                    self.report_issue(
+                        outcome, f"Provider returned HTTP {e.response.status_code}"
+                    )
                     Logger.info(
                         self.sketch_id,
                         {
@@ -500,18 +526,21 @@ class TemplateEnricher(Enricher):
                     )
                     continue
                 except httpx.TimeoutException:
+                    self.report_issue("failed", "Provider request timed out")
                     Logger.info(
                         self.sketch_id,
                         {"message": f"Request timeout for {self.request.url}"},
                     )
                     continue
                 except TemplateEnricherError as e:
+                    self.report_issue("failed", "Template response processing failed")
                     Logger.info(
                         self.sketch_id,
                         {"message": f"Template enricher error: {e}"},
                     )
                     continue
                 except Exception as e:
+                    self.report_issue("failed", "Unexpected provider processing error")
                     Logger.info(
                         self.sketch_id,
                         {
@@ -526,8 +555,7 @@ class TemplateEnricher(Enricher):
         self, results: List[Any], input_data: Optional[List[Any]] = None
     ) -> List[Any]:
         """Log results and return them."""
-        input_data = input_data or []
-        for input, output in zip(input_data, results):
+        for input, output in getattr(self, "_input_result_pairs", []):
             self.create_node(input)
             self.create_node(output)
             self.create_relationship(input, output, "HAS_SOCIAL_ACCOUNT")

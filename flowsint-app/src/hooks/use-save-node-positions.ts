@@ -73,7 +73,13 @@ export function useSaveNodePositions(sketchId?: string) {
 
       if (newMap.size > 0) {
         setChangedNodePositions(newMap)
-        setNodes(nodes)
+        // The rendered graph can be filtered; saving positions must retain hidden entities.
+        setNodes(
+          useGraphStore.getState().nodes.map((node) => {
+            const position = newMap.get(node.id)
+            return position ? { ...node, ...position, fx: position.x, fy: position.y } : node
+          })
+        )
         setSaveStatus('pending')
       }
     },

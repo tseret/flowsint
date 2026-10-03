@@ -32,12 +32,16 @@ htmlcov/
 .ruff_cache/
 
 flowsint-app/node_modules/
+node_modules/
+backups/
 flowsint-app/dist/
 flowsint-app/.vite/
 flowsint-app/coverage/
 
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 *.local
 

@@ -2,7 +2,7 @@
 API key management service with Vault integration.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from ..models import Key
 from ..repositories import KeyRepository
 from .base import BaseService
 from .exceptions import DatabaseError, NotFoundError
+from .vault_service import VaultService
 
 
 class keyService(BaseService):
@@ -18,24 +19,40 @@ class keyService(BaseService):
     Service for API key management with encryption via Vault.
     """
 
-    def __init__(self, db: Session, key_repo: KeyRepository, vault_service, **kwargs):
+    def __init__(
+        self,
+        db: Session,
+        key_repo: KeyRepository,
+        vault_service: VaultService,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(db, **kwargs)
         self._key_repo = key_repo
         self._vault_service = vault_service
 
     def get_keys_for_user(self, user_id: UUID) -> List[Key]:
-        return self._key_repo.get_by_owner(user_id)
+        return [
+            key
+            for key in self._key_repo.get_by_owner(user_id)
+            if not key.name.startswith("__flowsint_chatgpt_")
+        ]
 
     def get_key_by_owner_and_name(self, user_id: UUID, name: str) -> Key | None:
+        if name.startswith("__flowsint_chatgpt_"):
+            return None
         return self._key_repo.get_by_name_and_owner(user_id, name)
 
     def get_key_by_id(self, key_id: UUID, user_id: UUID) -> Key:
         key = self._key_repo.get_by_id_and_owner(key_id, user_id)
-        if not key:
+        if not key or key.name.startswith("__flowsint_chatgpt_"):
             raise NotFoundError("Key not found")
         return key
 
     def create_key(self, name: str, key_value: str, user_id: UUID) -> Key:
+        if name.startswith("__flowsint_chatgpt_"):
+            raise DatabaseError(
+                "This key name is reserved for subscription connections"
+            )
         try:
             key = self._vault_service.set_secret(
                 user_id, vault_ref=name, plain_key=key_value
@@ -52,6 +69,15 @@ class keyService(BaseService):
         self._commit()
 
     def get_decrypted_key(self, name_or_id: str, user_id: UUID) -> Optional[str]:
+        try:
+            key_id = UUID(name_or_id)
+        except ValueError:
+            if name_or_id.startswith("__flowsint_chatgpt_"):
+                return None
+        else:
+            key = self._key_repo.get_by_id_and_owner(key_id, user_id)
+            if key and key.name.startswith("__flowsint_chatgpt_"):
+                return None
         return self._vault_service.get_secret(user_id, name_or_id)
 
     def chat_key_exist(self, user_id: UUID) -> bool:
@@ -59,8 +85,6 @@ class keyService(BaseService):
 
 
 def create_key_service(db: Session) -> keyService:
-    from .vault_service import VaultService
-
     return keyService(
         db=db,
         key_repo=KeyRepository(db),

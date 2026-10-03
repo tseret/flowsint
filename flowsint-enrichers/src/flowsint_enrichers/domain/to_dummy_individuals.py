@@ -23,15 +23,11 @@ class ToDummyEnricher(Enricher):
         return "Domain"
 
     @classmethod
-    def key(cls) -> str:
-        return "domain"
-
-    @classmethod
     def documentation(cls) -> str:
         """Return formatted markdown documentation for the domain resolver enricher."""
         return ""
 
-    async def scan(self, data: List[InputType]) -> List[OutputType]:
+    async def scan(self, data: List[InputType]) -> Dict[str, List[OutputType]]:  # type: ignore[override]
         results: Dict[str, List[OutputType]] = {}
         for d in data:
             # Add dummy related items
@@ -44,7 +40,7 @@ class ToDummyEnricher(Enricher):
 
     def postprocess(
         self, results: Dict[str, List[OutputType]], original_input: List[InputType]
-    ) -> List[OutputType]:
+    ) -> Dict[str, List[OutputType]]:
         for domain in results:
             root = Domain(domain=domain)
             self.create_node(root)

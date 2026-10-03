@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 from urllib.parse import urlparse
 
 from reconspread import Crawler
@@ -25,10 +25,6 @@ class WebsiteToLinks(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Website"
-
-    @classmethod
-    def key(cls) -> str:
-        return "url"
 
     def extract_domain(self, url: str) -> str:
         """Extract domain from URL."""
@@ -70,7 +66,7 @@ class WebsiteToLinks(Enricher):
                 external_urls = []
                 external_domains = set()
 
-                def url_handler(url, is_external=False):
+                def url_handler(url: Any, is_external: bool = False) -> None:
                     """Custom callback to handle URLs as they're discovered."""
                     if is_external:
                         external_urls.append(url)

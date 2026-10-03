@@ -82,7 +82,10 @@ export const sketchService = {
       body: body
     })
   },
-  updateNode: async (sketchId: string, body: BodyInit): Promise<{ status: string }> => {
+  updateNode: async (
+    sketchId: string,
+    body: BodyInit
+  ): Promise<{ status: string; node: { id: string; version: number } }> => {
     return fetchWithAuth(`/api/sketches/${sketchId}/nodes/edit`, {
       method: 'PUT',
       body: body

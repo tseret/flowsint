@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import requests
 
@@ -15,21 +15,6 @@ class WebsiteToSubdomains(Enricher):
 
     InputType = Website
     OutputType = Website
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
@@ -49,10 +34,6 @@ class WebsiteToSubdomains(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Website"
-
-    @classmethod
-    def key(cls) -> str:
-        return "url"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results = []
@@ -87,11 +68,11 @@ class WebsiteToSubdomains(Enricher):
                     ]:
                         ip = subdomain.get("ip")
 
-                        cloudflare = []
+                        cloudflare: list[str] = []
                         if subdomain.get("cloudflare") is True:
                             cloudflare.append("Cloudflare")
                         else:
-                            cloudflare = None
+                            cloudflare = None  # type: ignore[assignment]  # None (not []) is sent as technologies
 
                         results.append(
                             Website(

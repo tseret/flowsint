@@ -13,6 +13,9 @@ last_updated_at: "2026-05-15"
 **asn_to_cidrs**: Given an ASN, enumerate its announced CIDR ranges.
 Tools/Pivots: [asnmap](https://github.com/projectdiscovery/asnmap) (CLI), [jq](https://jqlang.github.io/jq/) (CLI)
 
+**asn_to_cidrs_ripestat**: Given an ASN, list its announced prefixes (keyless alternative to asnmap).
+Tools/APIs: [RIPEstat announced-prefixes](https://stat.ripe.net/docs/data-api/api-endpoints/announced-prefixes)
+
 ### CIDR
 **cidr_to_ips**: Expand a CIDR to IPs by PTR enumeration heuristics.
 Tools/Pivots: [dnsx](https://github.com/projectdiscovery/dnsx) (CLI)
@@ -46,14 +49,30 @@ Tools/APIs: [Whoxy API](https://www.whoxy.com/api/)
 **domain_to_website**: Convert a domain to a reachable website URL (HTTP/HTTPS), following redirects.
 Tools/Pivots: HTTP HEAD requests
 
-**domain_to_tls**: Retrieve TLS/SSL certificate information for a domain.
-Tools/Pivots: [httpx](https://github.com/projectdiscovery/httpx) (CLI)
+**domain_to_tls**: Retrieve the supplied domain’s TLS/SSL certificate as an `SSLCertificate`, linked by `PRESENTS_CERTIFICATE`. Stores issuer, serial, validity, SANs and fingerprints when supplied; does not expand to SAN hosts.
+Tools/Pivots: [httpx TLS grabbing](https://docs.projectdiscovery.io/opensource/httpx/usage) (CLI)
 
 **domain_to_whois_history**: Retrieve historical WHOIS records for a domain and extract related entities (individuals, organizations, emails, locations).
 Tools/APIs: [WhoisXML API](https://whois.whoisxmlapi.com/)
 
 **domain_to_dehashed**: Get breach intelligence (credentials, related individuals) associated with a domain.
 Tools/APIs: [DeHashed API](https://www.dehashed.com/docs)
+
+**domain_to_ips_virustotal**: Historical IPs a domain resolved to (passive DNS; edge `PASSIVE_DNS_RESOLVED_TO`, not current DNS).
+Requires `VT_API_KEY`. Follows up to `max_pages` pages (default 5, 40 records per page, allowed 1–25); reports partial/truncated results when a continuation remains. Each relationship retains observation date and provider source reference.
+Tools/APIs: [VirusTotal resolutions](https://docs.virustotal.com/reference/domain-object-resolutions)
+
+**domain_to_reputation_virustotal**: Read existing community reputation and engine verdict counts into a `ReputationScore`; no rescan or submission. Negative/positive community votes are kept separately from malicious/suspicious/undetected engine counts. Stores provider analysis date and source reference. Requires `VT_API_KEY`.
+Tools/APIs: [VirusTotal domains](https://docs.virustotal.com/reference/domains-object)
+
+**domain_to_threatfox**: Malware families linked to a domain or its URLs in ThreatFox.
+Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
+
+**domain_to_sekoia**: Malware indicated by a domain in the Sekoia Intelligence Center.
+Tools/APIs: [Sekoia CTI API](https://docs.sekoia.com/cti/features/integrations/api/)
+
+**domain_to_urlhaus**: Malware distribution URLs hosted on a domain, from URLhaus.
+Tools/APIs: [URLhaus API](https://urlhaus-api.abuse.ch/)
 
 ### Email
 **email_to_breaches**: Check whether an email appears in known breaches.
@@ -76,6 +95,16 @@ Tools/APIs: [DeHashed API](https://www.dehashed.com/docs)
 
 **email_to_device_hudsonrock**: Look up devices compromised by infostealers and associated with an email.
 Tools/APIs: [HudsonRock API](https://www.hudsonrock.com/)
+
+### File
+**file_to_malwarebazaar**: Malware family and file metadata for a hash (MD5/SHA1/SHA256) in MalwareBazaar.
+Tools/APIs: [MalwareBazaar API](https://bazaar.abuse.ch/api/)
+
+**file_to_threatfox**: Malware families linked to a file hash in ThreatFox.
+Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
+
+**file_to_virustotal**: Detection ratio, threat label and metadata for a file hash.
+Tools/APIs: [VirusTotal API v3](https://docs.virustotal.com/reference/file-info)
 
 ### Individual
 **individual_to_domains**: Find domains registered by a specific person; extract related contacts and attributes.
@@ -102,6 +131,37 @@ Tools/APIs: [Scamalytics API](https://scamalytics.com/ip-api)
 
 **ip_to_intelligence**: Get breach intelligence (credentials, related individuals) associated with an IP.
 Tools/APIs: [DeHashed API](https://www.dehashed.com/docs)
+
+**ip_to_internetdb**: Open ports, hostnames and known vulns for an IP, keyless.
+Tools/APIs: [Shodan InternetDB](https://internetdb.shodan.io/)
+
+**ip_to_ports_shodan**: Open ports with service and banner for an IP.
+Tools/APIs: [Shodan API](https://developer.shodan.io/api)
+
+**ip_to_ports_driftnet**: Open TCP ports observed on an IP by Driftnet's internet scans.
+Tools/APIs: [Driftnet API](https://driftnet.io/api-docs/open-ports)
+
+**ip_to_asn_ripestat**: Map IPs to their ASN, keyless.
+Tools/APIs: [RIPEstat network-info / as-overview](https://stat.ripe.net/docs/data-api)
+
+**ip_to_abuseipdb**: AbuseIPDB abuse-confidence score and report context for an IP.
+Tools/APIs: [AbuseIPDB API v2](https://docs.abuseipdb.com/)
+
+**ip_to_domains_virustotal**: Historical domains seen resolving to an IP (passive DNS).
+Requires `VT_API_KEY`; the same bounded pagination and observation evidence as the domain connector.
+Tools/APIs: [VirusTotal resolutions](https://docs.virustotal.com/reference/ip-object-resolutions)
+
+**ip_to_reputation_virustotal**: Read existing community reputation and engine verdict counts into a `ReputationScore`, with analysis date and source reference. Requires `VT_API_KEY`; never requests a rescan.
+Tools/APIs: [VirusTotal IP addresses](https://docs.virustotal.com/reference/ip-object)
+
+**ip_to_threatfox**: Malware families linked to an IP (incl. `ip:port` IOCs) in ThreatFox.
+Tools/APIs: [ThreatFox API](https://threatfox.abuse.ch/api/)
+
+**ip_to_sekoia**: Malware indicated by an IP in the Sekoia Intelligence Center.
+Tools/APIs: [Sekoia CTI API](https://docs.sekoia.com/cti/features/integrations/api/)
+
+**ip_to_urlhaus**: Malware distribution URLs hosted on an IP, from URLhaus.
+Tools/APIs: [URLhaus API](https://urlhaus-api.abuse.ch/)
 
 ### Organization
 **org_to_domains**: Find domains registered by an organization; extract contacts and related entities.
@@ -151,6 +211,9 @@ Tools/APIs: reconspread Crawler
 
 **website_to_text**: Fetch and extract visible text from a webpage.
 Tools/APIs: HTTP GET, [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)
+
+**website_to_urlhaus**: Malware payloads (as File hashes) a URL served, from URLhaus.
+Tools/APIs: [URLhaus API](https://urlhaus-api.abuse.ch/)
 
 **website_to_webtrackers**: Extract analytics/ads tracking codes from a website.
 Tools/APIs: recontrack TrackingCodeExtractor

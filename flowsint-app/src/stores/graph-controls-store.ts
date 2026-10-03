@@ -10,6 +10,8 @@ type GraphControlsStore = {
   isSelectorModeActive: boolean
   selectionMode: SelectionMode
   currentLayoutType: LayoutType
+  showPivotServices: boolean
+  setShowPivotServices: (show: boolean) => void
   zoomToFit: () => void
   zoomIn: () => void
   zoomOut: () => void
@@ -33,6 +35,8 @@ export const useGraphControls = create<GraphControlsStore>()(
       isSelectorModeActive: false,
       selectionMode: 'lasso',
       currentLayoutType: 'force',
+      showPivotServices: false,
+      setShowPivotServices: (showPivotServices) => set({ showPivotServices }),
       zoomToFit: () => {},
       zoomIn: () => {},
       zoomOut: () => {},

@@ -207,6 +207,11 @@ flowsint-types (types)
 
 ## Development setup
 
+For matching local production builds, diagnostics, upgrade and backup/restore
+instructions, see [local deployment](docs/developers/local-deployment.mdx).
+See [investigation workspace](docs/getting-started/workspace.mdx) for enrichment
+outcomes, evidence, graph views, and collaboration.
+
 ### Prerequisites
 
 - Docker

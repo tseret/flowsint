@@ -26,10 +26,6 @@ class OrgToInfosEnricher(Enricher):
     def category(cls) -> str:
         return "Organization"
 
-    @classmethod
-    def key(cls) -> str:
-        return "name"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
 
         results: List[OutputType] = []

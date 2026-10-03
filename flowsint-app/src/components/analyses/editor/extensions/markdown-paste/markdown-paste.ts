@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin } from '@tiptap/pm/state'
-import { MarkdownManager } from '@tiptap/markdown'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 function looksLikeMarkdown(text: string): boolean {
   return (
@@ -20,21 +21,8 @@ function looksLikeMarkdown(text: string): boolean {
 export const PasteMarkdown = Extension.create({
   name: 'pasteMarkdown',
 
-  addStorage() {
-    return {
-      markdownManager: null as MarkdownManager | null
-    }
-  },
-
-  onCreate() {
-    this.storage.markdownManager = new MarkdownManager({
-      extensions: this.editor.extensionManager.baseExtensions
-    })
-  },
-
   addProseMirrorPlugins() {
     const { editor } = this
-    const storage = this.storage
 
     return [
       new Plugin({
@@ -43,10 +31,10 @@ export const PasteMarkdown = Extension.create({
             const text = event.clipboardData?.getData('text/plain')
             if (!text) return false
 
-            if (storage.markdownManager && looksLikeMarkdown(text)) {
+            if (looksLikeMarkdown(text)) {
               try {
-                const json = storage.markdownManager.parse(text)
-                editor.chain().focus().insertContent(json).run()
+                const html = DOMPurify.sanitize(marked.parse(text, { async: false }))
+                editor.chain().focus().insertContent(html).run()
                 return true
               } catch (e) {
                 console.error('[PasteMarkdown]', e)

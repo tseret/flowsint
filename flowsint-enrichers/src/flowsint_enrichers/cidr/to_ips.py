@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from tools.network.mapcidr import MapcidrTool
 
@@ -17,21 +17,6 @@ class CidrToIpsEnricher(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = CIDR
     OutputType = Ip
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def required_params(cls) -> bool:
@@ -52,10 +37,6 @@ class CidrToIpsEnricher(Enricher):
     @classmethod
     def name(cls) -> str:
         return "cidr_to_ips"
-
-    @classmethod
-    def key(cls) -> str:
-        return "network"
 
     @classmethod
     def category(cls) -> str:

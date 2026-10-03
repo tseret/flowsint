@@ -17,10 +17,6 @@ def test_category():
     assert tool.category() == "Subdomain enumeration"
 
 
-def test_image():
-    assert tool.get_image() == "projectdiscovery/subfinder"
-
-
 def test_install():
     tool.install()
     assert tool.is_installed() is True

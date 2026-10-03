@@ -88,30 +88,39 @@ export const AnalysisEditor = ({
   const queryClient = useQueryClient()
   // State/refs for editor
   const editorContentRef = useRef<any>('')
+  const savedVersionRef = useRef({ id: analysis?.id, version: analysis?.version })
+  useEffect(() => {
+    if (savedVersionRef.current.id !== analysis?.id) {
+      savedVersionRef.current = { id: analysis?.id, version: analysis?.version }
+    }
+  }, [analysis?.id, analysis?.version])
   // Lazy initializer: analysis can already be loaded on mount, and the
   // render-time sync below only fires on later id *changes*.
   const [titleValue, setTitleValue] = useState(() => analysis?.title || '')
   const [editor, setEditor] = useState<Editor | undefined>(undefined)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved')
+  const [saveError, setSaveError] = useState<string | null>(null)
   // Debounced save function
 
   const createMutation = useCreateAnalysis(routeInvestigationId, onAnalysisCreate)
 
   const saveMutation = useMutation({
+    scope: { id: analysis?.id || 'analysis-draft' },
     mutationFn: async (updated: Partial<Analysis>) => {
       if (!analysis) return
       return analysisService.update(
         analysis.id,
         JSON.stringify({
-          ...analysis,
           ...updated,
+          version: savedVersionRef.current.version,
           content: editorContentRef.current
         })
       )
     },
     onSuccess: async (data) => {
       if (!data) return
+      savedVersionRef.current = { id: data.id, version: data.version }
       // Use more specific query invalidation with query key factory
       queryClient.setQueryData(
         queryKeys.analyses.byInvestigation(investigationId || ''),
@@ -122,8 +131,10 @@ export const AnalysisEditor = ({
       )
       onAnalysisUpdate?.(data)
       setSaveStatus('saved')
+      setSaveError(null)
     },
     onError: (error) => {
+      setSaveError(error instanceof Error ? error.message : 'Could not save analysis')
       toast.error(
         'Failed to save analysis: ' + (error instanceof Error ? error.message : 'Unknown error')
       )
@@ -177,18 +188,20 @@ export const AnalysisEditor = ({
   })
 
   const updateTitleMutation = useMutation({
+    scope: { id: analysis?.id || 'analysis-draft' },
     mutationFn: async (newTitle: string) => {
       if (!analysis) return
       return analysisService.update(
         analysis.id,
         JSON.stringify({
-          ...analysis,
-          title: newTitle
+          title: newTitle,
+          version: savedVersionRef.current.version
         })
       )
     },
     onSuccess: async (data) => {
       if (!data) return
+      savedVersionRef.current = { id: data.id, version: data.version }
       // Use more specific query invalidation
       queryClient.setQueryData(['analyses', investigationId], (oldData: Analysis[] | undefined) => {
         if (!oldData) return oldData
@@ -196,8 +209,10 @@ export const AnalysisEditor = ({
       })
       onAnalysisUpdate?.(data)
       toast.success('Title updated')
+      setSaveError(null)
     },
     onError: (error) => {
+      setSaveError(error instanceof Error ? error.message : 'Could not save analysis')
       toast.error(
         'Failed to update title: ' + (error instanceof Error ? error.message : 'Unknown error')
       )
@@ -210,6 +225,30 @@ export const AnalysisEditor = ({
     setTitleValue(newTitle)
     updateTitleMutation.mutate(newTitle)
     setIsEditingTitle(false)
+  }
+
+  const reloadLatest = async () => {
+    if (!analysis) return
+    if (
+      !(await confirm({
+        title: 'Reload latest analysis?',
+        message: 'Your unsaved edits will be replaced by the latest saved analysis.'
+      }))
+    )
+      return
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+    try {
+      const data = await analysisService.getById(analysis.id)
+      savedVersionRef.current = { id: data.id, version: data.version }
+      editorContentRef.current = data.content
+      editor?.commands.setContent(data.content ?? '', false)
+      setTitleValue(data.title)
+      onAnalysisUpdate?.(data)
+      setSaveStatus('saved')
+      setSaveError(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not reload analysis')
+    }
   }
 
   const deleteAnalysis = async () => {
@@ -268,6 +307,14 @@ export const AnalysisEditor = ({
 
   return (
     <div className={`flex flex-col h-full w-full overflow-y-auto bg-card ${className}`}>
+      {saveError && (
+        <div role="alert" className="border-b p-3 text-sm">
+          {saveError}{' '}
+          <Button variant="outline" size="sm" onClick={() => void reloadLatest()}>
+            Reload latest
+          </Button>
+        </div>
+      )}
       {/* Header */}
       {showHeader && (
         <div className="bg-card/70 sticky top-0 z-10 backdrop-blur-sm h-10 border-b w-full flex items-center justify-between">

@@ -5,7 +5,7 @@ This module provides a service layer for graph operations,
 integrating repository and logging functionality.
 """
 
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, cast
 
 from pydantic import BaseModel
 
@@ -80,13 +80,12 @@ class GraphService:
 
     def create_node(self, node_obj: GraphNode) -> str | None:
         """
-        Create or update a node in the graph.
+        Create or update a node from a GraphNode.
 
-        Supports one signatures:
-         - GraphNode object: create_node(obj)
+        Use create_node_from_flowsint_type() for FlowsintType objects.
 
         Args:
-            node_obj: a GraphNode object
+            node_obj: GraphNode to store
         """
 
         if isinstance(node_obj, FlowsintType):
@@ -94,6 +93,10 @@ class GraphService:
                 "create_node method takes a GraphNode as input. If you want to insert a node from a FlowsintType, please use create_node_from_flowsint_type method."
             )
 
+        if isinstance(node_obj.nodeProperties, dict):
+            node_obj.nodeProperties = GraphSerializer.parse_flowsint_type(
+                node_obj.nodeProperties, node_obj.nodeType, self._type_resolver
+            )
         neo4j_node_dict: GraphDict = GraphSerializer.graph_node_to_neo4j_dict(node_obj)
 
         if self._enable_batching:
@@ -107,16 +110,18 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+        return None
 
-    def create_node_from_flowsint_type(self, node_obj: FlowsintType) -> str | None:
+    def create_node_from_flowsint_type(
+        self, node_obj: FlowsintType, metadata: Optional[Dict[str, Any]] = None
+    ) -> str | None:
         """
-        Create or update a node in the graph.
+        Create or update a node from a FlowsintType.
 
-        Supports one signatures:
-         - FlowsintType object: create_node(obj)
+        Use create_node() for GraphNode objects.
 
         Args:
-            node_obj: a FlowsintType object
+            node_obj: FlowsintType to store
         """
 
         if isinstance(node_obj, GraphNode):
@@ -127,6 +132,10 @@ class GraphService:
         neo4j_node_dict: GraphDict = GraphSerializer.flowsint_type_to_neo4j_dict(
             node_obj
         )
+        if metadata:
+            neo4j_node_dict.update(
+                {f"nodeMetadata.{key}": value for key, value in metadata.items()}
+            )
 
         if self._enable_batching:
             self._repository.add_to_batch(
@@ -139,6 +148,7 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+        return None
 
     def get_sketch_graph(self) -> GraphData:
         graph_data = self.repository.get_sketch_graph(self.sketch_id)
@@ -163,23 +173,22 @@ class GraphService:
         from_obj: BaseModel,
         to_obj: BaseModel,
         rel_label: str = "IS_RELATED_TO",
+        observation: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Create a relationship between two nodes.
-
-        Supports 1 signature:
-         - Pydantic objects: create_relationship(obj1, obj2, "rel_label")
+        Create a relationship between two nodes, matched by type and label.
 
         Args:
-            from_obj: A GraphNode object (source)
-            to_obj: A GraphNode object (target)
-            rel_label: Relationship label (ex: "IS_CONNECTED_TO")
-            **properties: Additional relationship properties
+            from_obj: FlowsintType or GraphNode (source)
+            to_obj: FlowsintType or GraphNode (target)
+            rel_label: Relationship type (e.g. "IS_CONNECTED_TO")
         """
 
         neo4j_rel_dict: GraphDict = GraphSerializer.graph_edge_to_neo4j_dict(
             from_obj, to_obj, rel_label
         )
+        if observation:
+            neo4j_rel_dict["observation"] = observation
 
         if self._enable_batching:
             self._repository.add_to_batch(
@@ -198,7 +207,7 @@ class GraphService:
         from_element_id: str,
         to_element_id: str,
         rel_label: str = "IS_RELATED_TO",
-    ):
+    ) -> Optional[Dict[str, Any]]:
         return self._repository.create_relationship_by_element_id(
             from_element_id=from_element_id,
             to_element_id=to_element_id,
@@ -217,13 +226,34 @@ class GraphService:
         edges = GraphSerializer.deserialize_edges(graph_data.get("edges", []))
         return GraphData(nodes=nodes, edges=edges)
 
-    def update_node(self, element_id: str, updates: Dict[str, Any]) -> str | None:
+    def update_node(
+        self,
+        element_id: str,
+        updates: Dict[str, Any],
+        expected_version: Optional[int] = None,
+    ) -> str | None:
+        """Validate edited properties and keep their canonical identity current."""
+        updates = {key: value for key, value in updates.items() if key != "nodeKey"}
+        if "nodeProperties" in updates:
+            records = self._repository.get_nodes_by_ids([element_id], self._sketch_id)
+            if not records:
+                return None
+            current = GraphSerializer.neo4j_dict_to_graph_node(
+                {**records[0], "id": element_id}, type_resolver=self._type_resolver
+            )
+            entity = type(current.nodeProperties).model_validate(
+                {**current.nodeProperties.model_dump(), **updates["nodeProperties"]}
+            )
+            updates["nodeProperties"] = entity.model_dump(
+                mode="json", exclude_unset=True
+            )
+            updates["nodeKey"] = GraphSerializer.canonical_key(entity)
         flatten_updates = GraphSerializer.flatten(updates)
-        """Update a node by its element ID."""
         return self._repository.update_node(
             element_id=element_id,
             updates=flatten_updates,
             sketch_id=self._sketch_id,
+            expected_version=expected_version,
         )
 
     def update_nodes_positions(self, positions: List[Dict[str, Any]]) -> int:
@@ -308,7 +338,7 @@ class GraphService:
         if self._enable_batching:
             self._repository.flush_batch()
 
-    def query(self, cypher: str, parameters: Dict[str, Any] = None) -> list:
+    def query(self, cypher: str, parameters: Optional[Dict[str, Any]] = None) -> list:
         """
         Execute a custom Cypher query.
 
@@ -319,7 +349,7 @@ class GraphService:
         Returns:
             List of result records
         """
-        return self._repository.query(cypher, parameters)
+        return self._repository.query(cypher, parameters)  # type: ignore[arg-type]  # protocol omits Optional; callers pass None
 
     def set_batch_size(self, size: int) -> None:
         """
@@ -330,11 +360,11 @@ class GraphService:
         """
         self._repository.set_batch_size(size)
 
-    def __enter__(self):
+    def __enter__(self) -> "GraphService":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush()
@@ -368,7 +398,7 @@ def create_graph_service(
     return GraphService(
         sketch_id=sketch_id,
         repository=repository,
-        logger=Logger,
+        logger=cast(LoggerProtocol, Logger),
         enable_batching=enable_batching,
         type_resolver=type_resolver,
     )

@@ -16,4 +16,9 @@ export type RuleFilter = {
 export type Filters = {
   types: TypeFilter[]
   rules: RuleFilter[]
+  provider?: string
+  relationship?: string
+  observedAfter?: string
+  observedBefore?: string
+  collapsedTypes?: string[]
 }

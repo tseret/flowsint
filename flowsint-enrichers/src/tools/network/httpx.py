@@ -6,10 +6,6 @@ from ..dockertool import DockerTool
 
 class HttpxTool(DockerTool):
     image = "projectdiscovery/httpx"
-    default_tag = "latest"
-
-    def __init__(self):
-        super().__init__(self.image, self.default_tag)
 
     @classmethod
     def name(cls) -> str:
@@ -22,9 +18,6 @@ class HttpxTool(DockerTool):
     @classmethod
     def category(cls) -> str:
         return "Web technologies enumeration"
-
-    def install(self) -> None:
-        super().install()
 
     def version(self) -> str:
         try:
@@ -43,13 +36,6 @@ class HttpxTool(DockerTool):
             return version
         except Exception as e:
             return f"unknown (error: {str(e)})"
-
-    def update(self) -> None:
-        # Pull the latest image
-        self.install()
-
-    def is_installed(self) -> bool:
-        return super().is_installed()
 
     def launch(self, target: str, args: List[str] | None = None) -> Any:
         if args is None:

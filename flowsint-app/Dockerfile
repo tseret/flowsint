@@ -5,19 +5,26 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 COPY package.json yarn.lock ./
+COPY flowsint-app/package.json ./flowsint-app/package.json
 
-RUN yarn install --network-timeout 100000
+RUN yarn install --frozen-lockfile --network-timeout 100000
 
-COPY . .
+COPY flowsint-app ./flowsint-app
+WORKDIR /app/flowsint-app
 
 # API URL baked at build time. Empty = same-origin relative URLs (/api/...),
 # served through the nginx reverse proxy below. Only override for an external API origin.
 ARG VITE_API_URL=""
 ENV VITE_API_URL=${VITE_API_URL}
+ARG BUILD_REVISION=development
+ENV VITE_BUILD_REVISION=${BUILD_REVISION}
 
 RUN yarn build
 
 FROM nginx:1.29-alpine AS production
+
+ARG BUILD_REVISION=development
+LABEL org.opencontainers.image.revision=${BUILD_REVISION}
 
 LABEL org.opencontainers.image.source="https://github.com/reconurge/flowsint"
 LABEL org.opencontainers.image.description="Flowsint Frontend"
@@ -30,9 +37,9 @@ RUN addgroup -g 1001 -S flowsint && \
     # Remove default config
     rm -f /etc/nginx/conf.d/default.conf
 
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY flowsint-app/nginx.conf /etc/nginx/nginx.conf
 
-COPY --from=builder --chown=flowsint:flowsint /app/dist /usr/share/nginx/html
+COPY --from=builder --chown=flowsint:flowsint /app/flowsint-app/dist /usr/share/nginx/html
 
 EXPOSE 8080
 

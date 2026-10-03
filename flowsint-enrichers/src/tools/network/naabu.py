@@ -6,10 +6,6 @@ from ..dockertool import DockerTool
 
 class NaabuTool(DockerTool):
     image = "projectdiscovery/naabu"
-    default_tag = "latest"
-
-    def __init__(self):
-        super().__init__(self.image, self.default_tag)
 
     @classmethod
     def name(cls) -> str:
@@ -24,9 +20,6 @@ class NaabuTool(DockerTool):
     @classmethod
     def category(cls) -> str:
         return "Port scanning"
-
-    def install(self) -> None:
-        super().install()
 
     def version(self) -> str:
         try:
@@ -45,13 +38,6 @@ class NaabuTool(DockerTool):
             return version
         except Exception as e:
             return f"unknown (error: {str(e)})"
-
-    def update(self) -> None:
-        # Pull the latest image
-        self.install()
-
-    def is_installed(self) -> bool:
-        return super().is_installed()
 
     def launch(
         self,

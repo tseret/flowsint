@@ -1,18 +1,10 @@
 import ipaddress
 import re
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Set
 from urllib.parse import urlparse
-
-import yaml
-
-from flowsint_core.core.graph.serializer import TypeResolver
-from flowsint_core.templates.types import Template
 
 # Template variable pattern: {{variable_name}} or {{secrets.NAME}}
 TEMPLATE_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}")
-
-# Allowed HTTP methods
-ALLOWED_METHODS = ["GET", "POST"]
 
 # Blocked IP ranges for SSRF protection
 BLOCKED_IP_RANGES = [
@@ -103,66 +95,6 @@ def sanitize_url_component(value: str) -> str:
 
 
 class YamlLoader:
-    @staticmethod
-    def load_enricher_yaml(filename: str) -> dict[str, Any] | yaml.YAMLError:
-        with open(filename, encoding="utf-8") as stream:
-            try:
-                return yaml.safe_load(stream)
-            except yaml.YAMLError as exc:
-                return exc
-
-    @staticmethod
-    def parse_yaml_to_template(
-        raw: dict[str, Any],
-        type_resolver: Optional[TypeResolver] = None,
-    ) -> Template:
-        if not isinstance(raw, dict):
-            raise ValueError("Template must be a YAML dictionary")
-
-        input_cfg: dict | None = raw.get("input", None)
-
-        if not input_cfg or not isinstance(input_cfg, dict):
-            raise ValueError("Missing 'input' property in the yaml.")
-
-        input_type: str | None = input_cfg.get("type", None)
-
-        if not input_type:
-            raise ValueError("Missing 'input.type' property in the yaml.")
-
-        if not type_resolver:
-            from flowsint_core.core.services.type_registry_service import (
-                local_type_resolver,
-            )
-
-            type_resolver = local_type_resolver
-        DetectedType = type_resolver(input_type)
-
-        request = raw.get("request", {})
-        method = request.get("method", "GET")
-
-        if method not in ALLOWED_METHODS:
-            raise ValueError(
-                f"Method '{method}' not present in {', '.join(ALLOWED_METHODS)}"
-            )
-
-        if not DetectedType:
-            raise ValueError(f"Type '{input_type}' not found in registry.")
-
-        return Template(**raw)
-
-    @staticmethod
-    def get_template_from_file(
-        filename: str,
-        type_resolver: Optional[TypeResolver] = None,
-    ) -> Template | None:
-        template_dict = YamlLoader.load_enricher_yaml(filename)
-        if not isinstance(template_dict, dict):
-            return None
-
-        return YamlLoader.parse_yaml_to_template(
-            template_dict, type_resolver=type_resolver
-        )
-
     @staticmethod
     def render_template(
         template: str,

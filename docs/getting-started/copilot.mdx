@@ -1,0 +1,146 @@
+---
+title: "Investigation copilot"
+description: "Review passive enrichment plans for selected entities and summarize their evidence."
+---
+
+Select up to ten IPs in a sketch and choose **Investigate selected entities**
+(the sparkle button in the graph toolbar). Enter an investigation question, then
+choose **Gather IP intelligence**. This collects existing records from every
+installed, credential-ready provider in the supported catalog, tracks the runs,
+and automatically generates an evidence-linked report for human review. A blank
+question uses a general IP intelligence question. Providers with missing keys
+are skipped and shown as collection gaps; other providers still run.
+
+The catalog includes Shodan's indexed ports/services and fingerprints, VirusTotal
+reputation and historical passive DNS, ThreatFox reports, and Modat indexed ports
+where installed. No live port scan or rescan is triggered. Observation dates are
+preserved when supplied, so indexed open ports do not imply current reachability.
+Related domains and fingerprints can support candidate infrastructure links for
+review; discovered entities are never automatically queried.
+
+**Suggest a plan** remains available for reviewing and editing a plan before
+execution, including mixed IP/domain selections.
+
+The copilot reads the selected entities, a bounded set of nearby relationships,
+and recent run summaries from that sketch. It proposes up to seven passive steps.
+Review each step's entities, provider, reason, and credential prerequisites.
+Remove unnecessary steps before choosing **Run reviewed plan**.
+
+Plans also support local root-domain normalization and domain ThreatFox lookups.
+Each selected IP receives at most six provider requests across the full catalog:
+one each for ThreatFox, Shodan services, Modat ports and VirusTotal reputation,
+plus two pages of VirusTotal DNS history. Missing/uninstalled providers reduce
+that count. Normalization makes no external requests. Saved copilot DNS recipes
+retain the two-page limit. Provider quota failures and partial coverage remain
+visible in run evidence.
+
+## Review services and indexed fingerprint matches
+
+Select a Port to inspect its endpoint, application protocol, readable banner,
+provider, observation/retrieval dates and recorded fingerprints. **Refresh from
+Modat (passive)** and **Refresh from Shodan (passive)** refresh indexed service
+records for the port’s owning IP. They require one unambiguous `HAS_PORT` owner
+matching the recorded host, edit permission and configured provider credentials.
+They can add other indexed ports on that same host; they do not probe the host.
+
+For recorded Modat services, choose a fingerprint and inspect **Exact Modat
+query**, then click **Search Modat index**. HASSH is selected by default when
+available. The server builds the query from stored service evidence, checks its
+version and executes one service-index request with the same port, protocol,
+transport and fingerprint. A single supported fingerprint is sufficient to
+return unverified candidates; the old related-IP connector’s three-family gate
+does not apply. No LLM is needed or charged for this lookup.
+
+Matches show their fingerprints beside the source values, readable banners,
+observation dates and provider references. They are leads for review: common
+software or configuration can produce shared hashes without common control.
+Choose **Save candidate as pending finding** to retain the exact query and
+supporting snapshot in the investigation, attached to the source service.
+Existing case review controls handle decisions. Query results never insert new
+IP graph nodes or query/enrich matched hosts automatically.
+
+The lookup reads one page of up to 50 indexed records, excludes the source IP,
+verifies returned endpoint/hash matches, and flags omitted or incomplete results.
+Provider limits, key errors and unusable responses are shown explicitly without
+billing/provider fallback. Stale service evidence requires reload before another
+search. Query syntax uses the service-index endpoint, where all filters apply to
+one service record; see the [Modat API reference](https://api.magnify.modat.io/).
+
+With IPs selected, **Review related IP evidence** in the copilot also shows these
+service controls alongside existing/imported Modat pivot and shared historical
+DNS paths in the current sketch. Existing graph associations can be recorded as
+pending, accepted or rejected findings; unchanged evidence restores its decision.
+ASN/port-only links do not establish an association. Graph review reads at most
+20 candidates, five paths per candidate and 50 services; truncation is flagged.
+
+Older Modat port records need a passive refresh to recover discarded fingerprints,
+banners and provider observation dates. Service evidence reloads when graph
+updates advance the port version, and a manual reload remains available.
+
+## Model configuration and evidence
+
+Open **Profile → Copilot connection** and choose **Continue with ChatGPT** to
+connect an eligible ChatGPT subscription. Complete sign-in and consent, then
+return to Profile. The model picker lists models available to the connected
+account. The default is GPT-6.1 Sol with **medium** reasoning effort; if your
+account does not offer that model, choose an available model explicitly.
+
+Subscription usage counts against your ChatGPT allowance. A disconnected account,
+unavailable model, or exhausted allowance produces an actionable error; Flowsint
+does not automatically switch to paid API billing. Saved accounts can be selected
+and reconnected from Profile, or disconnected there. Tokens are encrypted in the
+existing Vault storage and never exposed through its key list.
+
+This connection currently supports the local instance at `http://localhost:5173`.
+Shared remote team hosting needs the separate supported remote sign-in flow.
+Existing Codex sign-in credentials are not imported or reused.
+
+For API billing, explicitly select **API key — separate billing** in Profile.
+Flowsint then uses the configured Mistral or OpenAI provider and your Vault key.
+Supported settings are `LLM_PROVIDER` and `LLM_MODEL`; key names are
+`MISTRAL_API_KEY` and `OPENAI_API_KEY`. Selected graph context and your question
+are sent to the selected provider. Vault values are never included in evidence,
+and credential-like property fields are removed.
+
+The local review setup uses GPT-6.1 Sol with medium reasoning effort:
+
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-6.1-sol
+LLM_REASONING_EFFORT=medium
+```
+
+In API mode, add `OPENAI_API_KEY` to your Vault to enable model-backed runs. The
+reasoning setting applies to OpenAI planning, summaries, and chat. It does not
+enable additional execution tools or change the reviewed-plan workflow.
+
+In API mode without a configured model, the copilot offers type-based suggestions and factual
+run summaries, explicitly labelled **no LLM used**. These suggestions do not
+interpret the investigation question. Configured-provider failures are shown
+as errors, so they do not look like successful model responses.
+
+After execution, review the run statuses, outcome summaries, and result evidence.
+Model summaries cite their run IDs. An empty result does not establish absence;
+failed, partial, or truncated results require further review. You can save a
+summary as a draft case finding, with its evidence references and review decision
+set to pending.
+
+## Reuse and permissions
+
+**Save reviewed plan as flow** creates an ordinary flow recipe with input types
+and independent enrichment branches. It does not store the original entity IDs
+or values. It can be saved after execution, when enrichers have updated entity
+versions. The normal flow editor and launch controls remain available.
+
+Readers can generate plans and inspect accessible results. Running plans and
+saving recipes require edit permission on the source investigation. The API
+rechecks permissions, compatible entity types, selected IDs, and required key
+presence. Execution also checks entity versions: if a collaborator changed a
+selected entity after planning, generate a new plan before running it.
+
+The copilot has no arbitrary code, shell, Cypher, or URL execution tools. Provider
+and graph text is treated as evidence rather than instructions. Plans stay
+bounded to their reviewed selection; graph arrangement and defensive searches
+over imported telemetry are later capabilities. Final reports organize evidence
+by IP where attribution permits, separate observations from hypotheses, and
+retain collection gaps when saved as draft findings.

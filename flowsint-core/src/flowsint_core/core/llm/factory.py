@@ -47,6 +47,8 @@ def create_llm_provider(
     if provider == "openai":
         from .providers.openai import OpenAIProvider
 
+        if effort := os.environ.get("LLM_REASONING_EFFORT"):
+            kwargs["reasoning_effort"] = effort
         return OpenAIProvider(**kwargs)
 
     # Unreachable due to the check above, but satisfies type checkers

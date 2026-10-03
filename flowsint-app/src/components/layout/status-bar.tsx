@@ -16,7 +16,7 @@ export const StatusBar = memo(() => {
   const toggleConsole = useLayoutStore((s) => s.toggleConsole)
 
   const { data: scans, isLoading } = useQuery({
-    queryKey: ['scans', 'list'],
+    queryKey: ['scans', 'list', sketch_id],
     queryFn: () => scanService.getSketchScans(sketch_id as string),
     enabled: !!sketch_id,
     refetchInterval: 2500

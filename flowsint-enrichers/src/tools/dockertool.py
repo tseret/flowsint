@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from docker import from_env
 from docker.errors import APIError, DockerException, ImageNotFound
@@ -7,24 +7,19 @@ from .base import Tool
 
 
 class DockerTool(Tool):
-    # Subclasses (SubfinderTool, NaabuTool, ...) set this as a class
-    # attribute with the bare image name — get_image() below reads that,
-    # while __init__ below sets self.image to an instance-level
-    # "name:tag" shadow used for the actual docker calls.
+    # Subclasses set the bare image name; __init__ shadows it per instance
+    # with "name:tag", which is what the docker calls use.
     image: str
+    default_tag = "latest"
 
-    def __init__(self, image: str, default_tag: str = "latest") -> None:
-        self.image = f"{image}:{default_tag}"
+    def __init__(self) -> None:
+        self.image = f"{self.image}:{self.default_tag}"
         try:
             self.client = from_env()
         except Exception as e:
             raise RuntimeError(
                 f"Failed to connect to Docker daemon. Is Docker running? Error: {e}"
             )
-
-    @classmethod
-    def get_image(cls) -> str:
-        return cls.image
 
     def install(self) -> None:
         try:
@@ -57,7 +52,7 @@ class DockerTool(Tool):
 
     def launch(
         self,
-        command: str,
+        command: str | List[str],
         volumes: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
         environment: Optional[Dict[str, Any]] = None,
