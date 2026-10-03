@@ -6,6 +6,10 @@ import { usePermissions } from '@/hooks/use-can'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import {
+  FingerprintImportButton,
+  isFingerprintFinding
+} from '@/components/sketches/service-investigation'
 
 export interface CaseTarget {
   sketch_id: string
@@ -151,6 +155,7 @@ export function CaseWorkspace({
               <strong>Assessment:</strong> {item.assessment}
             </p>
           )}
+          {isFingerprintFinding(item) && <FingerprintImportButton finding={item} />}
           {canEdit && (
             <Button size="sm" variant="outline" onClick={() => setEditing({ ...item })}>
               Edit / review

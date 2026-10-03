@@ -252,3 +252,11 @@ Done:
 
 Next:
 - Reload the graph, select the source SSH Port and inspect its context, indexed query controls and three pending findings. Review decisions remain human actions. Team deployment remains pending approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-03 — saved fingerprint candidates into graph
+Done:
+- Added explicit graph import from lookup results and previously saved case findings. Imports one saved finding ID/version, validates scope, endpoint and exact recorded fingerprint/query, and rejects stale/rejected evidence. No provider call or LLM use.
+- Creates candidate IP and its own host-specific Port, HAS_PORT ownership and SHARES_FINGERPRINT evidence links to the source service. Canonical identities and create-only properties preserve existing enrichment; retry deduplicates nodes, links and observations. Review decision stays unchanged.
+- Feature checks: 839 Python and 59 frontend tests pass; full lint passes with 129 inherited warnings. Four optional Neo4j skips. API regressions cover import/retry, saved evidence, permissions, stale/deleted graph and invalid findings.
+Next:
+- Run the committed changed-file typecheck gate, integrate without discarding local connectors, build API/frontend sequentially and apply to the existing local stack. Import the three saved Hexanet matches and verify ownership, evidence and retry behavior. Update this handoff with runtime evidence. Team deployment remains pending approval; draft PR: https://github.com/tseret/flowsint/pull/1.

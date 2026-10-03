@@ -993,3 +993,147 @@ def test_lookup_checks_version_of_query_snapshot_even_if_initial_node_read_is_ol
     )
     assert result.status_code == 409
     lookup.assert_not_called()
+
+
+def _fingerprint_finding(db_session, sketch_id):
+    from flowsint_core.core.models import CaseItem, Sketch
+
+    sketch = db_session.get(Sketch, UUID(sketch_id))
+    evidence = {
+        "query": 'port=22 protocol="ssh" transport="tcp" ssh.hassh="' + "ab" * 16 + '"',
+        "source": {
+            "source_id": "ip-1",
+            "service_id": "service-22",
+            "host": "192.0.2.1",
+            "port": 22,
+            "transport": "TCP",
+            "service": "ssh",
+            "fingerprints": {"ssh.hassh": "ab" * 16},
+        },
+        "candidate": {
+            "ip": "192.0.2.2",
+            "port": 22,
+            "transport": "tcp",
+            "protocol": "ssh",
+            "banner": "SSH-test",
+            "observed_at": "2026-10-01",
+            "fingerprints": {"ssh.hassh": "ab" * 16},
+            "matching_fingerprints": ["ssh.hassh"],
+        },
+        "matching_fingerprints": ["ssh.hassh"],
+        "retrieved_at": "2026-10-02",
+    }
+    item = CaseItem(
+        investigation_id=sketch.investigation_id,
+        sketch_id=sketch.id,
+        author_id=sketch.owner_id,
+        kind="finding",
+        target_kind="entity",
+        target_id="service-22",
+        body="Unverified fingerprint candidate",
+        evidence=json.dumps(evidence),
+    )
+    db_session.add(item)
+    db_session.commit()
+    return item, evidence
+
+
+def test_import_saved_fingerprint_adds_host_specific_service_and_evidence(
+    client, db_session, service_backend, monkeypatch
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    finding, evidence = _fingerprint_finding(db_session, sketch_id)
+    graph = service_backend[0]
+    context = graph.query.return_value
+    imported = {
+        "ip_id": "candidate-ip",
+        "service_id": "candidate-ssh",
+        "source_service_id": "service-22",
+    }
+    graph.query.side_effect = [context, [imported], context, [imported]]
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    for _ in range(2):
+        response = client.post(
+            "/api/copilot/fingerprint/import",
+            headers=headers,
+            json={
+                "sketch_id": sketch_id,
+                "finding_id": str(finding.id),
+                "finding_version": finding.version,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == imported
+    query, params = graph.query.call_args.args
+    assert "ON CREATE SET service += $port_props" in query
+    assert "SHARES_FINGERPRINT" in query and "HAS_PORT" in query
+    assert params["port_props"]["nodeProperties.host"] == "192.0.2.2"
+    assert params["port_props"]["nodeProperties.fingerprints.ssh.hassh"] == "ab" * 16
+    assert params["source_id"] == "service-22" and params["source_version"] == 3
+    observation = json.loads(params["observation"])
+    assert observation["evidence"] == evidence
+    assert observation["finding_id"] == str(finding.id)
+    db_session.refresh(finding)
+    assert finding.decision == "pending"
+    lookup.assert_not_called()
+    service_backend[2].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "change,code",
+    [
+        ("stale", 409),
+        ("rejected", 409),
+        ("scope", 404),
+        ("hash", 422),
+        ("port", 422),
+        ("source", 422),
+        ("malformed", 422),
+        ("viewer", 403),
+        ("graph_changed", 409),
+    ],
+)
+def test_import_rejects_stale_unscoped_or_invalid_finding(
+    client, db_session, service_backend, monkeypatch, change, code
+):
+    headers, sketch_id = _seed_user(
+        db_session, (Role.VIEWER,) if change == "viewer" else (Role.OWNER,)
+    )
+    finding, evidence = _fingerprint_finding(db_session, sketch_id)
+    if change == "rejected":
+        finding.decision = "rejected"
+    if change == "scope":
+        finding.sketch_id = None
+    if change == "hash":
+        evidence["candidate"]["fingerprints"]["ssh.hassh"] = "ff" * 16
+    if change == "port":
+        evidence["candidate"]["port"] = 443
+    if change == "source":
+        evidence["source"]["host"] = "192.0.2.99"
+    finding.evidence = "bad JSON" if change == "malformed" else json.dumps(evidence)
+    db_session.commit()
+    if change == "graph_changed":
+        graph = service_backend[0]
+        graph.query.side_effect = [graph.query.return_value, []]
+    lookup = MagicMock()
+    monkeypatch.setattr(route, "lookup_recorded_fingerprint", lookup)
+    response = client.post(
+        "/api/copilot/fingerprint/import",
+        headers=headers,
+        json={
+            "sketch_id": sketch_id,
+            "finding_id": str(finding.id),
+            "finding_version": finding.version + (1 if change == "stale" else 0),
+        },
+    )
+    assert response.status_code == code, response.text
+    lookup.assert_not_called()
+    service_backend[2].assert_not_called()
+    assert (
+        not any(
+            "MERGE" in call.args[0] for call in service_backend[0].query.call_args_list
+        )
+        if change != "graph_changed"
+        else True
+    )
