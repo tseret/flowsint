@@ -417,7 +417,11 @@ def test_edge_observations_survive_graph_api_serialization():
             "source": "a",
             "target": "b",
             "type": "RESOLVES_TO",
-            "data": {"observations": [json.dumps(item) for item in observations]},
+            "data": {
+                "caption": "Shared SSH HASSH · port 22",
+                "observations": [json.dumps(item) for item in observations],
+            },
         }
     )
     assert edge.observations == observations
+    assert edge.caption == "Shared SSH HASSH · port 22"

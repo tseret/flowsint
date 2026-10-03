@@ -57,7 +57,7 @@ export const transformGraphData = ({
 
     return {
       ...edge,
-      edgeLabel: edge.label,
+      edgeLabel: edge.caption || edge.label,
       curvature,
       groupIndex,
       groupSize

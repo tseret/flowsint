@@ -1,4 +1,6 @@
 import { useGraphStore } from '@/stores/graph-store'
+import { useGraphControls } from '@/stores/graph-controls-store'
+import { compactPivotGraph } from '@/lib/graph-presentation'
 import React, {
   useRef,
   useCallback,
@@ -62,6 +64,32 @@ const GraphMain = () => {
   const setCurrentEdgeId = useGraphStore((s) => s.setCurrentEdgeId)
   const selectedNodes = useGraphStore((s) => s.selectedNodes)
   const selectedEdges = useGraphStore((s) => s.selectedEdges)
+  const currentNodeId = useGraphStore((s) => s.currentNodeId)
+  const currentEdgeId = useGraphStore((s) => s.currentEdgeId)
+  const expanded = useGraphControls((s) => s.showPivotServices)
+  const displayed = useMemo(
+    () =>
+      compactPivotGraph(filteredNodes, filteredEdges, {
+        expanded,
+        selectedNodeIds: [
+          ...selectedNodes.map((node) => node.id),
+          ...(currentNodeId ? [currentNodeId] : [])
+        ],
+        selectedEdgeIds: [
+          ...selectedEdges.map((edge) => edge.id),
+          ...(currentEdgeId ? [currentEdgeId] : [])
+        ]
+      }),
+    [
+      filteredNodes,
+      filteredEdges,
+      expanded,
+      selectedNodes,
+      selectedEdges,
+      currentNodeId,
+      currentEdgeId
+    ]
+  )
 
   const graphRef = useRef<GraphViewerRef>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -300,8 +328,8 @@ const GraphMain = () => {
   return (
     <div ref={containerRef} className="relative h-full w-full bg-background">
       <GraphViewer
-        nodes={filteredNodes}
-        edges={filteredEdges}
+        nodes={displayed.nodes}
+        edges={displayed.edges}
         onNodeClick={handleNodeClick}
         onNodeRightClick={onNodeContextMenu}
         onEdgeRightClick={onEdgeContextMenu}
