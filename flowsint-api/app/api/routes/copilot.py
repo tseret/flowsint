@@ -1,8 +1,6 @@
-"""Reviewed passive enrichment plans, using existing providers and workers."""
+"""Autonomous passive investigation agent and recorded-evidence review routes."""
 
-import asyncio
 import json
-import re
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from typing import Any, cast
@@ -10,85 +8,43 @@ from uuid import UUID
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
-from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from flowsint_core.core.celery import celery
 from flowsint_core.core.graph import GraphNode, create_graph_service
 from flowsint_core.core.graph.serializer import GraphSerializer
-from flowsint_core.core.llm.protocol import LLMProvider, SubscriptionError
-from flowsint_core.core.models import CaseItem, Key, Profile, Scan, Sketch
+from flowsint_core.core.llm.protocol import SubscriptionError
+from flowsint_core.core.models import AgentRun, CaseItem, Key, Profile, Sketch
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
     NotFoundError,
     PermissionDeniedError,
     create_chat_service,
     create_enricher_service,
-    create_flow_service,
     create_sketch_service,
 )
 from flowsint_core.core.services.copilot_service import (
-    PASSIVE_ENRICHERS,
-    PASSIVE_PARAMS,
-    CopilotPlan,
     CopilotRequest,
     candidate_review_evidence,
     eligible_catalog,
-    planning_messages,
     service_fingerprint_evidence,
-    summary_messages,
-    validate_plan,
 )
 from flowsint_core.core.services.type_registry_service import (
     create_type_registry_service,
 )
 from flowsint_core.core.vault import Vault
-from flowsint_core.utils import extract_input_schema_flow
 from flowsint_enrichers import ENRICHER_REGISTRY
 from flowsint_enrichers.ip.to_ports_modat import (
     FIELDS,
     lookup_recorded_fingerprint,
     recorded_fingerprint_query,
 )
-from flowsint_types import Domain, Ip, Port
+from flowsint_types import Ip, Port
 
 router = APIRouter()
-
-
-def _model_failure(error: Exception, fallback: str) -> HTTPException:
-    if isinstance(error, SubscriptionError):
-        return HTTPException(502, str(error))
-    # Return fixed messages; provider bodies can contain sensitive request data.
-    if isinstance(error, APIStatusError):
-        if error.code in {"credit_balance_exhausted", "insufficient_quota"}:
-            return HTTPException(
-                502,
-                "The OpenAI project has exhausted its API credits or quota. "
-                "Check that project's billing and limits, or update OPENAI_API_KEY "
-                "in Vault with a key from a funded project.",
-            )
-        if error.status_code == 401:
-            return HTTPException(
-                502, "OpenAI rejected the API key. Update OPENAI_API_KEY in Vault."
-            )
-        if error.status_code in {403, 404}:
-            return HTTPException(
-                502,
-                "The configured OpenAI model is unavailable to this project. Check model access and API key permissions.",
-            )
-        if error.status_code == 429:
-            return HTTPException(
-                503, "OpenAI is rate limiting requests. Wait before trying again."
-            )
-    if isinstance(error, (TimeoutError, APIConnectionError)):
-        return HTTPException(
-            504, "The model connection failed or timed out. Try again later."
-        )
-    return HTTPException(502, fallback)
 
 
 class ServiceContextRequest(BaseModel):
@@ -109,15 +65,12 @@ class FingerprintImportRequest(BaseModel):
     finding_version: int = Field(ge=1)
 
 
-class SavePlan(CopilotPlan):
-    name: str = Field(min_length=1, max_length=120)
-
-
-class SummaryRequest(BaseModel):
+class AgentStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sketch_id: UUID
-    run_ids: list[UUID] = Field(min_length=1, max_length=7)
-    question: str = Field(min_length=1, max_length=2000)
+    node_ids: list[str] = Field(min_length=1, max_length=10)
+    objective: str = Field(min_length=1, max_length=2000)
+    max_steps: int = Field(default=20, ge=1, le=50)
 
 
 def _check_sketch(db: Session, user: Profile, sketch_id: UUID, write: bool) -> None:
@@ -149,238 +102,6 @@ def _selection(
         keys,
     )
     return graph, nodes, candidates
-
-
-def _provider(db: Session, user: Profile) -> LLMProvider | None:
-    try:
-        return create_chat_service(db).get_llm_provider(user.id)
-    except ValueError:
-        # No configured model: offer transparent deterministic suggestions instead.
-        return None
-    except SubscriptionError as error:
-        raise HTTPException(502, str(error)) from None
-
-
-def _reviewed_plan(
-    payload: CopilotPlan, db: Session, user: Profile, require_fresh: bool = True
-) -> tuple[CopilotPlan, list[GraphNode]]:
-    _check_sketch(db, user, payload.sketch_id, write=True)
-    _, nodes, candidates = _selection(payload, db, user)
-    versions = {str(node.id): node.version for node in nodes}
-    if require_fresh and payload.node_versions != versions:
-        raise HTTPException(409, "Selected entities changed. Generate a new plan.")
-    try:
-        plan = validate_plan(
-            {
-                "analysis": payload.analysis,
-                "steps": [s.model_dump() for s in payload.steps],
-            },
-            CopilotRequest(
-                **payload.model_dump(include={"sketch_id", "node_ids", "question"})
-            ),
-            candidates,
-            payload.context_truncated,
-        )
-    except ValueError:
-        raise HTTPException(
-            422, "The plan includes an unavailable or incompatible lookup"
-        )
-    if not plan.steps:
-        raise HTTPException(422, "Select at least one enrichment step")
-    plan.node_versions = versions
-    return plan, nodes
-
-
-@router.post("/plan", response_model=CopilotPlan)
-async def plan_investigation(
-    payload: CopilotRequest,
-    db: Session = Depends(get_db),
-    current_user: Profile = Depends(get_current_user),
-) -> CopilotPlan:
-    _check_sketch(db, current_user, payload.sketch_id, write=False)
-    graph, nodes, candidates = _selection(payload, db, current_user)
-    # Read-only, sketch-scoped one-hop context; the model never supplies Cypher.
-    relationships = graph.query(
-        """MATCH (n)-[r]-(other)
-        WHERE elementId(n) IN $node_ids AND n.sketch_id = $sketch_id
-          AND other.sketch_id = $sketch_id AND n.deleted_at IS NULL
-          AND other.deleted_at IS NULL AND r.deleted_at IS NULL
-        RETURN elementId(r) AS id, type(r) AS relationship,
-          elementId(startNode(r)) AS source, elementId(endNode(r)) AS target,
-          other.nodeLabel AS neighbor_label, r.observations AS observations,
-          CASE WHEN other.nodeType = 'port' THEN properties(other) ELSE {} END AS neighbor_properties
-        ORDER BY id LIMIT 51""",
-        {"node_ids": payload.node_ids, "sketch_id": str(payload.sketch_id)},
-    )
-    recent = (
-        db.query(Scan)
-        .filter(Scan.sketch_id == payload.sketch_id)
-        .order_by(Scan.started_at.desc())
-        .limit(6)
-        .all()
-    )
-    messages, truncated = planning_messages(
-        payload,
-        [node.model_dump(mode="json") for node in nodes],
-        candidates,
-        {
-            "relationships": relationships[:50],
-            "recent_runs": [
-                {"run_id": str(run.id), "status": run.status, "summary": run.summary}
-                for run in recent[:5]
-            ],
-            "relationships_truncated": len(relationships) > 50,
-            "recent_runs_truncated": len(recent) > 5,
-        },
-    )
-    truncated |= len(relationships) > 50 or len(recent) > 5
-    provider = (
-        await run_in_threadpool(_provider, db, current_user) if candidates else None
-    )
-    if provider:
-        try:
-            response = await asyncio.wait_for(provider.complete(messages), timeout=60)
-            if len(response) > 20000:
-                raise ValueError("Oversized model response")
-            proposed = json.loads(response)
-            if not isinstance(proposed, dict):
-                raise ValueError("Expected a plan object")
-            plan = validate_plan(proposed, payload, candidates, truncated)
-        except (ValueError, TypeError):
-            raise HTTPException(502, "The model returned an invalid plan. Try again.")
-        except Exception as error:
-            raise _model_failure(
-                error, "The model could not generate a plan. Try again."
-            ) from None
-    else:
-        plan = validate_plan(
-            {
-                "analysis": (
-                    "Suggested compatible passive lookups. No LLM was used; these suggestions "
-                    "are based on entity types, not an interpretation of your question. "
-                    "Configure your LLM key in Profile for question-specific planning."
-                    if candidates
-                    else "No supported passive lookups are available for the selected entity types."
-                ),
-                "steps": [
-                    {
-                        "enricher": item["enricher"],
-                        "node_ids": item["node_ids"],
-                        "reason": item["description"]
-                        or "Compatible passive enrichment.",
-                    }
-                    for item in candidates[:7]
-                ],
-            },
-            payload,
-            candidates,
-            truncated,
-        )
-    plan.node_versions = {str(node.id): node.version for node in nodes}
-    return plan
-
-
-@router.post("/run")
-def run_plan(
-    payload: CopilotPlan,
-    db: Session = Depends(get_db),
-    current_user: Profile = Depends(get_current_user),
-) -> dict[str, Any]:
-    plan, nodes = _reviewed_plan(payload, db, current_user)
-    if any(step.missing_keys for step in plan.steps):
-        raise HTTPException(
-            422, "Configure the required provider keys before running this plan"
-        )
-    # Validate and serialize every step before the first task is queued.
-    by_id = {str(node.id): node for node in nodes}
-    try:
-        inputs = [
-            [
-                GraphSerializer.graph_node_to_flowsint_type(by_id[node_id]).model_dump(
-                    mode="json", serialize_as_any=True
-                )
-                for node_id in step.node_ids
-            ]
-            for step in plan.steps
-        ]
-    except (ValueError, TypeError, AttributeError):
-        raise HTTPException(
-            422, "Selected entity properties are invalid. Correct them before running."
-        )
-    runs: list[dict[str, Any]] = []
-    for step, entities in zip(plan.steps, inputs):
-        try:
-            task = celery.send_task(
-                "run_enricher",
-                args=[
-                    step.enricher,
-                    entities,
-                    str(plan.sketch_id),
-                    str(current_user.id),
-                ],
-                kwargs={"params": PASSIVE_PARAMS.get(step.enricher, {})},
-            )
-        except Exception:
-            if not runs:
-                raise HTTPException(
-                    503,
-                    "Could not queue enrichment. Check worker availability before retrying.",
-                )
-            return {
-                "runs": runs,
-                "error": "Only part of the plan was queued. Review these runs before starting another plan.",
-            }
-        runs.append(
-            {"id": task.id, "enricher": step.enricher, "node_ids": step.node_ids}
-        )
-    return {"runs": runs}
-
-
-@router.post("/collect")
-def collect_ip_intelligence(
-    payload: CopilotRequest,
-    db: Session = Depends(get_db),
-    current_user: Profile = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Collect indexed records for the exact selected IPs, then summarize runs."""
-    _check_sketch(db, current_user, payload.sketch_id, write=True)
-    _, nodes, candidates = _selection(payload, db, current_user)
-    if any(node.nodeType.lower() != "ip" for node in nodes):
-        raise HTTPException(
-            422, "Select only IP entities for IP intelligence collection"
-        )
-    plan = validate_plan(
-        {
-            "analysis": "Collect existing provider records for the selected IPs. "
-            "The final report will distinguish observations, hypotheses and gaps. "
-            "Related entities require review before any further lookups.",
-            "steps": [
-                {
-                    "enricher": item["enricher"],
-                    "node_ids": item["node_ids"],
-                    "reason": item["description"]
-                    or "Read existing provider intelligence",
-                }
-                for item in candidates
-            ],
-        },
-        payload,
-        candidates,
-    )
-    skipped = [step for step in plan.steps if step.missing_keys]
-    plan.steps = [step for step in plan.steps if not step.missing_keys]
-    if not plan.steps:
-        missing = sorted({key for step in skipped for key in step.missing_keys})
-        raise HTTPException(
-            422,
-            "No IP intelligence providers are ready. Configure provider keys in Vault: "
-            + ", ".join(missing),
-        )
-    # Fail an unavailable subscription before incurring intelligence-provider usage.
-    _provider(db, current_user)
-    plan.node_versions = {str(node.id): node.version for node in nodes}
-    result = run_plan(plan, db, current_user)
-    return {"plan": plan, "skipped": skipped, **result}
 
 
 @router.post("/candidates")
@@ -719,164 +440,114 @@ def import_fingerprint_candidate(
     return cast(dict[str, str], rows[0])
 
 
-@router.post("/save")
-def save_plan(
-    payload: SavePlan,
-    db: Session = Depends(get_db),
-    current_user: Profile = Depends(get_current_user),
-) -> dict[str, str]:
-    # A recipe stores types and actions, not original entity IDs or values.
-    # Enrichment can legitimately increment entity versions before the recipe is saved.
-    plan, _ = _reviewed_plan(payload, db, current_user, require_fresh=False)
-    if not payload.name.strip():
-        raise HTTPException(422, "A flow name is required")
-    metadata = {item["name"]: item for item in ENRICHER_REGISTRY.list()}
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-    categories = []
-    for index, step in enumerate(plan.steps):
-        item = metadata[step.enricher]
-        category = item["inputs"]["type"]
-        categories.append(category)
-        input_id, enricher_id = f"input-{index}", f"{step.enricher}-{index}"
-        input_type = Domain if category.lower() == "domain" else Ip
-        nodes.extend(
-            [
-                {
-                    "id": input_id,
-                    "type": "type",
-                    "position": {"x": 0, "y": index * 160},
-                    "data": extract_input_schema_flow(input_type),
-                },
-                {
-                    "id": enricher_id,
-                    "type": "enricher",
-                    "position": {"x": 300, "y": index * 160},
-                    "data": {
-                        **item,
-                        "type": "enricher",
-                        "params": PASSIVE_PARAMS.get(step.enricher, {}),
-                    },
-                },
-            ]
-        )
-        edges.append(
-            {
-                "id": f"edge-{index}",
-                "source": input_id,
-                "target": enricher_id,
-                "sourceHandle": category,
-                "targetHandle": category,
-            }
-        )
-    flow = create_flow_service(db).create(
-        payload.name.strip(),
-        f"Reviewed passive enrichment recipe. Question: {plan.question}. "
-        "Run on compatible selected entities; original case entity IDs are not stored.",
-        sorted(set(categories)),
-        {"nodes": nodes, "edges": edges},
-        current_user.id,
-    )
-    return {"id": str(flow.id)}
+def _run_view(run: AgentRun) -> dict[str, Any]:
+    return {
+        "id": str(run.id),
+        "sketch_id": str(run.sketch_id),
+        "objective": run.objective,
+        "seed_ids": run.seed_ids,
+        "status": run.status,
+        "max_steps": run.max_steps,
+        "steps": run.steps,
+        "report": run.report,
+        "finding_ids": run.finding_ids,
+        "error": run.error,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+    }
 
 
-@router.post("/summary")
-async def summarize_plan(
-    payload: SummaryRequest,
+def _agent_run(db: Session, user: Profile, run_id: UUID) -> AgentRun:
+    run = db.get(AgentRun, run_id)
+    if run is None:
+        raise HTTPException(404, "Agent run not found")
+    _check_sketch(db, user, run.sketch_id, write=False)
+    return run
+
+
+@router.post("/agent", status_code=201)
+def start_agent(
+    payload: AgentStartRequest,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
 ) -> dict[str, Any]:
-    _check_sketch(db, current_user, payload.sketch_id, write=False)
-    if len(set(payload.run_ids)) != len(payload.run_ids):
-        raise HTTPException(422, "Select distinct enrichment runs")
-    runs = (
-        db.query(Scan)
-        .filter(Scan.sketch_id == payload.sketch_id, Scan.id.in_(payload.run_ids))
-        .all()
+    _check_sketch(db, current_user, payload.sketch_id, write=True)
+    resolver = create_type_registry_service(db).build_type_resolver(current_user.id)
+    graph = create_graph_service(
+        sketch_id=str(payload.sketch_id), type_resolver=resolver
     )
-    if len(runs) != len(payload.run_ids):
-        raise HTTPException(404, "One or more enrichment runs are unavailable")
-    if any(
-        (run.summary or {}).get("enricher") not in PASSIVE_ENRICHERS for run in runs
-    ):
-        raise HTTPException(422, "Select supported passive enrichment runs")
-    if any(run.status not in {"COMPLETED", "FAILED"} for run in runs):
-        raise HTTPException(409, "Wait for all enrichment runs to finish")
-    by_id = {run.id: run for run in runs}
-    evidence = [
-        {
-            "run_id": str(run_id),
-            "status": by_id[run_id].status,
-            "summary": by_id[run_id].summary,
-            "details": by_id[run_id].details,
-        }
-        for run_id in payload.run_ids
-    ]
-    # Dated DNS/hostname observations live on relationships rather than output
-    # entities. Include only observations attributed to these authorized runs.
-    graph = create_graph_service(sketch_id=str(payload.sketch_id))
-    rows = graph.query(
-        """MATCH (source)-[r]->(target)
-        WHERE source.sketch_id = $sketch_id AND target.sketch_id = $sketch_id
-          AND source.deleted_at IS NULL AND target.deleted_at IS NULL
-          AND r.deleted_at IS NULL
-          AND any(obs IN coalesce(r.observations, []) WHERE
-            any(run_id IN $run_ids WHERE obs CONTAINS run_id))
-        RETURN source.nodeLabel AS source, target.nodeLabel AS target,
-          type(r) AS relationship, r.observations AS observations
-        ORDER BY elementId(r) LIMIT 201""",
-        {
-            "sketch_id": str(payload.sketch_id),
-            "run_ids": [str(id) for id in payload.run_ids],
-        },
+    seeds = list(dict.fromkeys(payload.node_ids))
+    if {node.id for node in graph.get_nodes_by_ids(seeds)} != set(seeds):
+        raise HTTPException(404, "One or more selected entities are unavailable")
+    # Fail an unavailable subscription now, before any provider usage is queued.
+    try:
+        create_chat_service(db).get_subscription_provider(current_user.id)
+    except (SubscriptionError, ValueError) as error:
+        raise HTTPException(502, str(error)) from None
+    run = AgentRun(
+        sketch_id=payload.sketch_id,
+        owner_id=current_user.id,
+        objective=payload.objective,
+        seed_ids=seeds,
+        status="running",
+        max_steps=payload.max_steps,
+        steps=[],
+        finding_ids=[],
     )
-    for item in evidence:
-        relationships = []
-        for row in rows[:200]:
-            observations = []
-            for raw in row.get("observations") or []:
-                try:
-                    observation = json.loads(raw) if isinstance(raw, str) else raw
-                except (ValueError, TypeError):
-                    continue
-                if (
-                    isinstance(observation, dict)
-                    and observation.get("scan_id") == item["run_id"]
-                ):
-                    observations.append(observation)
-            if observations:
-                relationships.append({**row, "observations": observations})
-        item["relationships"] = relationships
-        item["relationships_truncated"] = len(rows) > 200
-    messages, truncated = summary_messages(payload.question, evidence)
-    provider = await run_in_threadpool(_provider, db, current_user)
-    if provider:
-        try:
-            summary = await asyncio.wait_for(provider.complete(messages), timeout=60)
-            if not summary.strip() or len(summary) > 12000:
-                raise ValueError("Invalid summary")
-            # Unknown citation IDs must not look like evidence links in the UI.
-            citations = re.findall(r"\[run:([^\]]+)\]", summary)
-            if not citations or set(citations) - {
-                str(run_id) for run_id in payload.run_ids
-            }:
-                raise ValueError("Invalid evidence citations")
-        except Exception as error:
-            raise _model_failure(
-                error,
-                "The model could not produce a valid evidence-linked summary. Try again.",
-            ) from None
-    else:
-        lines = ["Recorded enrichment outcomes (no LLM used):"]
-        for run in runs:
-            result = run.summary or {}
-            lines.append(
-                f"- {result.get('enricher')}: {result.get('outcome', 'unknown')}; "
-                f"{result.get('input_count', 'unknown')} inputs, "
-                f"{result.get('output_count', 'unknown')} outputs. [run:{run.id}]"
-            )
-        lines.append(
-            "Empty results do not prove absence. Failed or partial runs are inconclusive; review the evidence before accepting a finding."
-        )
-        summary = "\n".join(lines)
-    return {"summary": summary, "evidence": evidence, "context_truncated": truncated}
+    db.add(run)
+    db.commit()
+    try:
+        celery.send_task("run_investigation_agent", args=[str(run.id)])
+    except Exception:
+        db.delete(run)
+        db.commit()
+        raise HTTPException(
+            503,
+            "Could not queue enrichment. Check worker availability before retrying.",
+        ) from None
+    db.refresh(run)
+    return _run_view(run)
+
+
+@router.get("/agent")
+def latest_agent_run(
+    sketch_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any] | None:
+    _check_sketch(db, current_user, sketch_id, write=False)
+    run = db.scalars(
+        select(AgentRun)
+        .where(AgentRun.sketch_id == sketch_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(1)
+    ).first()
+    return _run_view(run) if run else None
+
+
+@router.get("/agent/{run_id}")
+def get_agent_run(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    return _run_view(_agent_run(db, current_user, run_id))
+
+
+@router.post("/agent/{run_id}/cancel")
+def cancel_agent_run(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    run = _agent_run(db, current_user, run_id)
+    _check_sketch(db, current_user, run.sketch_id, write=True)
+    # Atomic: only a running run is cancelled; publishing/finished runs keep their state.
+    db.execute(
+        update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.status == "running")
+        .values(status="cancelled", finished_at=datetime.now(timezone.utc))
+    )
+    db.commit()
+    db.refresh(run)
+    return _run_view(run)
