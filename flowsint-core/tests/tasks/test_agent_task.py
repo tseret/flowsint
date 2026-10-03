@@ -1,5 +1,6 @@
 """Autonomous agent loop: passive dispatch, cancellation, citations, failures."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -94,12 +95,11 @@ def env(db_session, monkeypatch):
     monkeypatch.setattr(agent, "Logger", MagicMock())
     monkeypatch.setattr(agent, "POLL_S", 0)
 
-    def send_task(name, args, kwargs):
-        scan_id = uuid4()
-        state.dispatched.append((name, args[0]))
+    def apply(args, kwargs, task_id):
+        state.dispatched.append(("run_enricher", args[0]))
         db_session.add(
             Scan(
-                id=scan_id,
+                id=UUID(task_id),
                 sketch_id=sketch.id,
                 status=state.scan_status,
                 summary={"outcome": "results", "output_count": 2, "errors": []},
@@ -109,9 +109,15 @@ def env(db_session, monkeypatch):
         db_session.commit()
         if state.on_dispatch:
             state.on_dispatch()
-        return SimpleNamespace(id=str(scan_id))
 
-    monkeypatch.setattr(agent.celery, "send_task", send_task)
+    async def to_thread(fn, *args, **kwargs):
+        # Inline: in-memory SQLite is per-thread, so the fake cannot run in one.
+        fn(*args, **kwargs)
+        if state.scan_status == "PENDING":
+            await asyncio.Event().wait()  # a stalled enrichment never returns
+
+    monkeypatch.setattr(agent.run_enricher, "apply", apply)
+    monkeypatch.setattr(agent.asyncio, "to_thread", to_thread)
 
     def start(max_steps: int = 5) -> AgentRun:
         run = AgentRun(

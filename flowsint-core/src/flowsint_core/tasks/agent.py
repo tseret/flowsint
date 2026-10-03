@@ -34,6 +34,7 @@ from ..core.services.copilot_service import (
     validate_decision,
     validate_report,
 )
+from .enricher import run_enricher
 
 load_all_enrichers()
 
@@ -119,22 +120,30 @@ async def _complete(provider: LLMProvider, messages: list, until: float) -> str:
 
 
 async def _await_scan(
-    session: Session, run: AgentRun, scan_id: str, until: float
+    session: Session,
+    run: AgentRun,
+    enrichment: asyncio.Future,
+    scan_id: str,
+    until: float,
 ) -> dict[str, Any]:
-    while True:
-        scan = session.get(Scan, uuid.UUID(scan_id), populate_existing=True)
-        if scan is not None and scan.status in TERMINAL_SCAN:
-            summary = scan.summary or {}
-            return {
-                "outcome": str(summary.get("outcome") or scan.status.lower()),
-                "output_count": summary.get("output_count"),
-                "errors": summary.get("errors") or [],
-            }
+    while not (await asyncio.wait({enrichment}, timeout=POLL_S))[0]:
         if _cancelled(session, run):
             return {"outcome": "cancelled"}
         if monotonic() >= until:
             return {"outcome": "timeout"}
-        await asyncio.sleep(POLL_S)
+    scan = session.get(Scan, uuid.UUID(scan_id), populate_existing=True)
+    if scan is None:
+        message = "The enrichment recorded no scan"
+        return {
+            "outcome": "failed",
+            "errors": [{"outcome": "failed", "message": message}],
+        }
+    summary = scan.summary or {}
+    return {
+        "outcome": str(summary.get("outcome") or scan.status.lower()),
+        "output_count": summary.get("output_count"),
+        "errors": summary.get("errors") or [],
+    }
 
 
 async def _investigate(session: Session, run: AgentRun) -> None:
@@ -221,10 +230,16 @@ async def _investigate(session: Session, run: AgentRun) -> None:
         ]
         if _cancelled(session, run):
             return
-        task = celery.send_task(
-            "run_enricher",
-            args=[step.enricher, objects, str(run.sketch_id), str(owner_id)],
-            kwargs={"params": PASSIVE_PARAMS.get(step.enricher, {})},
+        scan_id = str(uuid.uuid4())
+        # Runs in this worker (own thread), not queued: a parent waiting on a
+        # free slot of its own pool would deadlock once agents fill the pool.
+        enrichment = asyncio.ensure_future(
+            asyncio.to_thread(
+                run_enricher.apply,
+                args=[step.enricher, objects, str(run.sketch_id), str(owner_id)],
+                kwargs={"params": PASSIVE_PARAMS.get(step.enricher, {})},
+                task_id=scan_id,
+            )
         )
         record: dict[str, Any] = {
             "step": len(steps) + 1,
@@ -232,7 +247,7 @@ async def _investigate(session: Session, run: AgentRun) -> None:
             "node_ids": step.node_ids,
             "reason": step.reason,
             "thought": decision.thought,
-            "scan_id": str(task.id),
+            "scan_id": scan_id,
             "outcome": "running",
         }
         steps.append(record)
@@ -242,7 +257,8 @@ async def _investigate(session: Session, run: AgentRun) -> None:
             await _await_scan(
                 session,
                 run,
-                record["scan_id"],
+                enrichment,
+                scan_id,
                 min(loop_until, monotonic() + STEP_TIMEOUT_S),
             )
         )
