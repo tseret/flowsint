@@ -172,16 +172,16 @@ def test_agent_run_of_another_sketch_is_hidden(client, db_session, backend):
 
 
 @pytest.mark.parametrize(
-    "status,started_ago,expected",
+    "status,past_cutoff,expected",
     [
-        ("running", 3601, "failed"),
-        ("publishing", 3601, "failed"),
-        ("running", 3500, "running"),
+        ("running", 60, "failed"),
+        ("publishing", 60, "failed"),
+        ("running", -60, "running"),
         ("running", None, "running"),
     ],
 )
-def test_agent_run_lost_past_worker_time_limit_reads_as_failed(
-    client, db_session, backend, status, started_ago, expected
+def test_agent_run_lost_past_agent_deadline_reads_as_failed(
+    client, db_session, backend, status, past_cutoff, expected
 ):
     headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
     run_id = client.post(
@@ -190,8 +190,12 @@ def test_agent_run_lost_past_worker_time_limit_reads_as_failed(
     run = db_session.get(AgentRun, UUID(run_id))
     run.status = status
     run.created_at = datetime(2020, 1, 1)
-    if started_ago is not None:
-        run.started_at = datetime.now(timezone.utc) - timedelta(seconds=started_ago)
+    if past_cutoff is not None:
+        run.started_at = (
+            datetime.now(timezone.utc)
+            - route.LOST_AFTER
+            - timedelta(seconds=past_cutoff)
+        )
     db_session.commit()
 
     latest = client.get(f"/api/copilot/agent?sketch_id={sketch_id}", headers=headers)

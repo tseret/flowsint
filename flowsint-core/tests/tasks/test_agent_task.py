@@ -44,7 +44,7 @@ class Provider:
     async def complete(self, messages) -> str:
         self.calls += 1
         reply = self.replies.pop(0)
-        return reply() if callable(reply) else reply
+        return str(reply() if callable(reply) else reply)
 
 
 @pytest.fixture
@@ -138,7 +138,9 @@ def _cancel(env) -> None:
 
 def _execute(env) -> AgentRun:
     agent.run_investigation_agent.apply(args=[str(env.run_id)], throw=True)
-    return env.session.get(AgentRun, env.run_id, populate_existing=True)
+    run: AgentRun | None = env.session.get(AgentRun, env.run_id, populate_existing=True)
+    assert run is not None
+    return run
 
 
 ENRICH = json.dumps(
