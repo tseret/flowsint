@@ -194,6 +194,44 @@ async def test_page_limit_validation(monkeypatch, pages):
 
 
 @pytest.mark.asyncio
+async def test_shared_hosting_ip_skipped_others_kept(monkeypatch):
+    pages = {
+        "1.1.1.1": [row("1.1.1.1", h) for h in ("a.com", "b.com", "c.com")],
+        # Repeated observations count once: 2 distinct hosts == cap, kept.
+        "2.2.2.2": [row("2.2.2.2", "x.com", d) for d in (1, 2)]
+        + [row("2.2.2.2", "y.com")],
+    }
+    enricher, calls = setup(
+        monkeypatch,
+        IpToDomainsVirusTotal,
+        lambda u: Response(payload={"data": pages[u.split("/")[-2]]}),
+        params={"max_hosts": "2"},
+    )
+    edges = graph(monkeypatch, enricher)
+    ips = [Ip(address="1.1.1.1"), Ip(address="2.2.2.2")]
+    results = await enricher.scan(ips)
+    enricher.postprocess(results, ips)
+    assert [d.domain for d in results] == ["x.com", "y.com"]
+    assert {e[1].address for e in edges} == {"2.2.2.2"} and len(edges) == 3
+    assert [i["outcome"] for i in enricher._issues] == ["partial"]
+    assert "1.1.1.1 resolves 3+ hostnames" in enricher._issues[0]["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosts", [-1, 1.5, True, "invalid"])
+async def test_max_hosts_validation(monkeypatch, hosts):
+    enricher, calls = setup(
+        monkeypatch,
+        IpToDomainsVirusTotal,
+        lambda u: Response(),
+        params={"max_hosts": hosts},
+    )
+    assert await enricher.scan([Ip(address="1.2.3.4")]) == []
+    assert calls == []
+    assert enricher._issues[0]["outcome"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_invalid_name_does_not_drop_valid_resolutions(monkeypatch):
     enricher, calls = setup(
         monkeypatch,

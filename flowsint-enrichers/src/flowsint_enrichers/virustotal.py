@@ -22,6 +22,13 @@ PAGE_SCHEMA = {
     "default": "5",
     "description": "Maximum passive DNS pages per input (40 records/page, 1–25). Remaining pages are reported as truncated.",
 }
+HOSTS_SCHEMA = {
+    "name": "max_hosts",
+    "type": "number",
+    "required": False,
+    "default": "0",
+    "description": "Skip an IP whose retrieved passive DNS pages hold more than this many distinct hostnames (shared hosting). 0 = no limit.",
+}
 
 
 def api_key(enricher: Enricher) -> str | None:

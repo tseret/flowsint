@@ -148,7 +148,7 @@ Tools/APIs: [RIPEstat network-info / as-overview](https://stat.ripe.net/docs/dat
 Tools/APIs: [AbuseIPDB API v2](https://docs.abuseipdb.com/)
 
 **ip_to_domains_virustotal**: Historical domains seen resolving to an IP (passive DNS).
-Requires `VT_API_KEY`; the same bounded pagination and observation evidence as the domain connector.
+Requires `VT_API_KEY`; the same bounded pagination and observation evidence as the domain connector. `max_hosts` (default 0 = no limit) skips an IP whose retrieved pages hold more distinct hostnames than the cap (shared hosting) and reports it as partial; the investigation copilot uses `max_pages=1`, `max_hosts=15`.
 Tools/APIs: [VirusTotal resolutions](https://docs.virustotal.com/reference/ip-object-resolutions)
 
 **ip_to_reputation_virustotal**: Read existing community reputation and engine verdict counts into a `ReputationScore`, with analysis date and source reference. Requires `VT_API_KEY`; never requests a rescan.

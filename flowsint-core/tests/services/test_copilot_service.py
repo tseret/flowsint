@@ -5,9 +5,11 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from flowsint_core.core.enricher_base import build_params_model
 from flowsint_core.core.graph.types import GraphData, GraphEdge, GraphNode, NodeMetadata
 from flowsint_core.core.llm.types import MessageRole
 from flowsint_core.core.services.copilot_service import (
+    PASSIVE_PARAMS,
     AgentDecision,
     AgentFinding,
     AgentReport,
@@ -22,7 +24,15 @@ from flowsint_core.core.services.copilot_service import (
     validate_plan,
     validate_report,
 )
+from flowsint_enrichers import ENRICHER_REGISTRY, load_all_enrichers
 from flowsint_types import Domain
+
+
+def test_passive_params_validate_against_enricher_schemas() -> None:
+    load_all_enrichers()
+    schemas = {e["name"]: e["params_schema"] for e in ENRICHER_REGISTRY.list()}
+    for name, params in PASSIVE_PARAMS.items():
+        build_params_model(schemas[name]).model_validate(params)
 
 
 @pytest.fixture
