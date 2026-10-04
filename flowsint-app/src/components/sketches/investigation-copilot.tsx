@@ -202,11 +202,13 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                 <h3 className="font-medium">Objective</h3>
                 <p className="text-sm whitespace-pre-wrap">{run.objective}</p>
                 <p className="text-sm">
-                  {run.status === 'running'
-                    ? `Running · step ${run.steps.length} of ${run.max_steps}`
-                    : run.status === 'publishing'
-                      ? 'Writing the report and draft findings…'
-                      : `Agent ${run.status} after ${run.steps.length} steps`}
+                  {run.status === 'running' && !run.started_at
+                    ? 'Waiting for an agent worker. The run starts when one is available.'
+                    : run.status === 'running'
+                      ? `Running · step ${run.steps.length} of ${run.max_steps}`
+                      : run.status === 'publishing'
+                        ? 'Writing the report and draft findings…'
+                        : `Agent ${run.status} after ${run.steps.length} steps`}
                 </p>
                 {run.status === 'running' && (
                   <Button variant="outline" size="sm" onClick={cancel} disabled={!canEdit || busy}>

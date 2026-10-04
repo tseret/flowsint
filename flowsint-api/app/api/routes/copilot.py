@@ -454,6 +454,7 @@ def _run_view(run: AgentRun) -> dict[str, Any]:
         "finding_ids": run.finding_ids,
         "error": run.error,
         "created_at": run.created_at.isoformat() if run.created_at else None,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
     }
 
