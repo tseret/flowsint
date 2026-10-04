@@ -14,6 +14,14 @@ from pydantic_core import to_jsonable_python
 from .connection import Neo4jConnection
 from .types import GraphDict, NodeVersionConflict
 
+# Flattened node props written only when MERGE creates the node.
+CREATE_ONLY_PROPS = (
+    "nodeMetadata.created_at",
+    "nodeMetadata.origin",
+    "nodeMetadata.created_by_scan",
+    "nodeMetadata.created_by_enricher",
+)
+
 
 class Neo4jGraphRepository:
     """
@@ -110,6 +118,13 @@ class Neo4jGraphRepository:
     ) -> Tuple[str, Dict[str, Any]]:
         node_label = node_obj.get("nodeLabel")
         node_type = node_obj.get("nodeType")
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        # Creation timestamp and provenance are first-write-wins: enrichers re-create
+        # their input node, which must not relabel a seed or reorder discovery waves.
+        props = {k: v for k, v in node_obj.items() if k not in CREATE_ONLY_PROPS}
+        create_only = {prop: node_obj.get(prop) for prop in CREATE_ONLY_PROPS}
+        create_only["nodeMetadata.created_at"] = created_at
 
         identity_fields = {
             key: value
@@ -138,16 +153,17 @@ class Neo4jGraphRepository:
         params = {
             "props": {
                 key: value
-                for key, value in node_obj.items()
+                for key, value in props.items()
                 if key not in ("version", "x", "y")
             },
+            "create_only": create_only,
             "x": node_obj.get("x") if node_obj.get("x") is not None else 100,
             "y": node_obj.get("y") if node_obj.get("y") is not None else 100,
             "node_label": node_label,
             "node_key": node_obj.get("nodeKey", node_label),
             "legacy_identity": legacy_identity,
             "sketch_id": sketch_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
         }
 
         query = f"""
@@ -157,7 +173,8 @@ class Neo4jGraphRepository:
         FOREACH (old IN CASE WHEN legacy IS NULL THEN [] ELSE [legacy] END | SET old.nodeKey = $node_key)
         MERGE (n:{node_type} {{ nodeKey: $node_key, sketch_id: $sketch_id }})
         ON CREATE SET n.created_at = $created_at, n.x = $x, n.y = $y,
-            n.`nodeMetadata.created_by_scan` = $props.`nodeMetadata.scan_id`
+            n.`nodeMetadata.created_by_scan` = $props.`nodeMetadata.scan_id`,
+            n += $create_only
         // A scan that revives a soft-deleted node owns it; later scans only restamp scan_id.
         ON MATCH SET n.`nodeMetadata.created_by_scan` = CASE WHEN n.deleted_at IS NULL
             THEN n.`nodeMetadata.created_by_scan` ELSE $props.`nodeMetadata.scan_id` END

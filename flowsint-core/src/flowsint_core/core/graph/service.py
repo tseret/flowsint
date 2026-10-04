@@ -43,6 +43,8 @@ class GraphService:
         logger: Optional[LoggerProtocol] = None,
         enable_batching: bool = False,
         type_resolver: Optional[TypeResolver] = None,
+        *,
+        provenance: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the graph service.
@@ -53,6 +55,8 @@ class GraphService:
             logger: Optional logger instance
             enable_batching: Enable batch operations
             type_resolver: Optional callable to resolve custom types by name
+            provenance: Optional {"origin", "created_by_scan", "created_by_enricher"}
+                stamped as nodeMetadata.* on nodes this service creates (first creation only)
 
         Raises:
             ValueError: If repository is not provided
@@ -67,6 +71,14 @@ class GraphService:
         self._logger = logger
         self._enable_batching = enable_batching
         self._type_resolver = type_resolver
+        self._provenance = provenance
+
+    def _stamp_provenance(self, neo4j_node_dict: GraphDict) -> GraphDict:
+        # Overwrite all three keys so a client-supplied nodeMetadata can't forge them.
+        if self._provenance is not None:
+            for key in ("origin", "created_by_scan", "created_by_enricher"):
+                neo4j_node_dict[f"nodeMetadata.{key}"] = self._provenance.get(key)
+        return neo4j_node_dict
 
     @property
     def sketch_id(self) -> str:
@@ -97,7 +109,9 @@ class GraphService:
             node_obj.nodeProperties = GraphSerializer.parse_flowsint_type(
                 node_obj.nodeProperties, node_obj.nodeType, self._type_resolver
             )
-        neo4j_node_dict: GraphDict = GraphSerializer.graph_node_to_neo4j_dict(node_obj)
+        neo4j_node_dict: GraphDict = self._stamp_provenance(
+            GraphSerializer.graph_node_to_neo4j_dict(node_obj)
+        )
 
         if self._enable_batching:
             self._repository.add_to_batch(
@@ -129,8 +143,8 @@ class GraphService:
                 "create_node_from_flowsint_type method takes a FlowsintType as input. If you want to insert a node from a GraphNode, please use create_node method."
             )
 
-        neo4j_node_dict: GraphDict = GraphSerializer.flowsint_type_to_neo4j_dict(
-            node_obj
+        neo4j_node_dict: GraphDict = self._stamp_provenance(
+            GraphSerializer.flowsint_type_to_neo4j_dict(node_obj)
         )
         if metadata:
             neo4j_node_dict.update(
@@ -374,6 +388,7 @@ def create_graph_service(
     sketch_id: str,
     enable_batching: bool = True,
     type_resolver: Optional[TypeResolver] = None,
+    provenance: Optional[Dict[str, str]] = None,
 ) -> GraphService:
     """
     Factory function to create a GraphService instance with Neo4j repository.
@@ -385,6 +400,7 @@ def create_graph_service(
         sketch_id: Investigation sketch ID
         enable_batching: Enable batch operations
         type_resolver: Optional callable to resolve custom types by name
+        provenance: Optional node provenance, see GraphService
 
     Returns:
         Configured GraphService instance
@@ -401,4 +417,5 @@ def create_graph_service(
         logger=cast(LoggerProtocol, Logger),
         enable_batching=enable_batching,
         type_resolver=type_resolver,
+        provenance=provenance,
     )

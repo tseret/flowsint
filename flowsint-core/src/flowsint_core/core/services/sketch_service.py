@@ -153,6 +153,7 @@ class SketchService(BaseService):
                 type_resolver=self._type_registry.build_type_resolver(user_id)
                 if self._type_registry
                 else None,
+                provenance={"origin": "manual"},
             )
             node_id = graph_service.create_node(node)
             stored_nodes = graph_service.get_nodes_by_ids([node_id]) if node_id else []

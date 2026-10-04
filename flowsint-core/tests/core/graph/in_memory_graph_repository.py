@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from flowsint_core.core.graph.repository import CREATE_ONLY_PROPS
+
 
 class InMemoryGraphRepository:
     """
@@ -43,17 +45,21 @@ class InMemoryGraphRepository:
                 data.get("nodeLabel") == node_label
                 and data.get("sketch_id") == sketch_id
             ):
-                # Update existing node
-                self._nodes[element_id].update(node_obj)
+                # Update existing node; creation-only props keep their first value
+                self._nodes[element_id].update(
+                    {k: v for k, v in node_obj.items() if k not in CREATE_ONLY_PROPS}
+                )
                 self._nodes[element_id]["deleted_at"] = None
                 return element_id
 
         # Create new node
         element_id = self._generate_element_id("node")
+        created_at = datetime.now(timezone.utc).isoformat()
         self._nodes[element_id] = {
             **node_obj,
+            "nodeMetadata.created_at": created_at,
             "sketch_id": sketch_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
             "deleted_at": None,
             "_labels": [node_type] if node_type else ["Node"],
         }
