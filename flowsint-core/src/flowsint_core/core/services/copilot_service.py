@@ -64,7 +64,7 @@ PASSIVE_ENRICHERS = {
     "website_to_urlhaus": "website",
 }
 # Params validate as strings (build_params_model); enrichers coerce.
-PASSIVE_PARAMS = {"ip_to_domains_virustotal": {"max_pages": "2"}}
+PASSIVE_PARAMS = {"ip_to_domains_virustotal": {"max_pages": "1", "max_hosts": "15"}}
 PASSIVE_KEYS = {
     "ip_to_ports_shodan": {"SHODAN_API_KEY"},
     "ip_to_ports_modat": {"MODAT_API_KEY"},
@@ -387,7 +387,11 @@ def decision_messages(
             "objective, applied to up to 10 entity IDs of its input_type taken from "
             "the graph. Never repeat an enricher on an entity listed in "
             "completed_steps. Pivot on new entities when they matter to the "
-            "objective. Finish when the objective is answered, remaining_steps is "
+            "objective. Reverse lookups (IP→domains) on shared hosting return "
+            "hundreds of unrelated hostnames; run them only when the objective "
+            "asks for co-hosted domains, and prefer 1–2 IPs per step. An IP "
+            "skipped as shared hosting is not evidence. Finish when the "
+            "objective is answered, remaining_steps is "
             "low and nothing important is pending, or no useful lookup remains. "
             'Return ONLY JSON: {"thought":"...","action":"enrich"|"finish",'
             '"enricher":"...","node_ids":["..."],"reason":"..."}. thought <=2000 '
