@@ -327,3 +327,19 @@ Done:
 
 Next:
 - "Undo agent run": one route that soft-deletes nodes whose `created_by_scan` is in the run's step scan IDs, plus the run's findings. Team deployment still needs approval.
+
+## 2026-10-04 — undo an agent run
+Done:
+- `POST /api/copilot/agent/{run_id}/undo` (editor+) soft-deletes these live items in the run's sketch:
+  - nodes whose `created_by_scan` is one of the run's step scans;
+  - the edges of those nodes;
+  - edges whose first observation names one of those scans.
+  It also deletes run findings still at version 1 (never edited or reviewed), logging a `deleted` case activity, and sets the run status to `undone`. It is idempotent.
+- It returns 409 while the run is running or publishing, or while any step scan is still pending and younger than Celery's hard time limit.
+- The copilot sheet has an "Undo run" button (with a confirm dialog) on completed, failed and cancelled runs. After an undo it refreshes the graph and the case workspace.
+- Applied api/celery/celery-agents/app images v1.2.13-117-gd9cea7cb.
+  - Live Cypher smoke on a throwaway sketch removed the scan's node and its edge, plus the scan's edge between pre-existing nodes. It kept another scan's node and edge. A second call removed 0. Cleanup left 0 nodes.
+  - In the UI, the button and confirm dialog appear on run 6a071010. The dialog was cancelled.
+
+Next:
+- Runs from before the provenance fix (6a071010, 1a9c2dc1) reach 0 nodes, because their nodes have no `created_by_scan`. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
