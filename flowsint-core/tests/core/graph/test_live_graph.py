@@ -125,3 +125,24 @@ def test_editing_primary_properties_updates_canonical_identity(live_graph):
         "MATCH (n:domain {sketch_id:$sketch_id}) RETURN count(n) AS count",
         {"sketch_id": sketch_id},
     ) == [{"count": 1}]
+
+
+def test_first_creating_scan_survives_later_scans(live_graph):
+    service, connection, _ = live_graph
+    domain = Domain(domain="owned.test")
+
+    def stamp(scan_id):
+        node_id = service.create_node_from_flowsint_type(
+            domain, metadata={"scan_id": scan_id}
+        )
+        row = connection.query(
+            "MATCH (n) WHERE elementId(n)=$id RETURN n.`nodeMetadata.created_by_scan`"
+            " AS created, n.`nodeMetadata.scan_id` AS latest",
+            {"id": node_id},
+        )[0]
+        return node_id, (row["created"], row["latest"])
+
+    node_id, _ = stamp("scan-a")
+    assert stamp("scan-b")[1] == ("scan-a", "scan-b")
+    service.delete_nodes([node_id])
+    assert stamp("scan-c")[1] == ("scan-c", "scan-c")

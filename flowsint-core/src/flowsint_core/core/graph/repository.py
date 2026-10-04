@@ -156,7 +156,11 @@ class Neo4jGraphRepository:
         WITH head(collect(legacy)) AS legacy
         FOREACH (old IN CASE WHEN legacy IS NULL THEN [] ELSE [legacy] END | SET old.nodeKey = $node_key)
         MERGE (n:{node_type} {{ nodeKey: $node_key, sketch_id: $sketch_id }})
-        ON CREATE SET n.created_at = $created_at, n.x = $x, n.y = $y
+        ON CREATE SET n.created_at = $created_at, n.x = $x, n.y = $y,
+            n.`nodeMetadata.created_by_scan` = $props.`nodeMetadata.scan_id`
+        // A scan that revives a soft-deleted node owns it; later scans only restamp scan_id.
+        ON MATCH SET n.`nodeMetadata.created_by_scan` = CASE WHEN n.deleted_at IS NULL
+            THEN n.`nodeMetadata.created_by_scan` ELSE $props.`nodeMetadata.scan_id` END
         SET n += $props
         SET n.version = coalesce(n.version, 0) + 1
         SET n.deleted_at = null
