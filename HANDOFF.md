@@ -310,3 +310,12 @@ Done:
 
 Next:
 - Open the copilot sheet with `celery-agents` stopped to see the waiting message. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-04 — stop shared-hosting floods in copilot reverse DNS
+Done:
+- Reverted agent run 6a071010-ebf5-4a5e-828d-b7855e517cc6 on sketch d15772f2-…: soft-deleted the 501 domains it added (707 edges) and its 3 draft findings; the sketch is back to 56 live nodes. The `agent_runs` row is kept as history.
+- `ip_to_domains_virustotal` takes `max_hosts` (default 0 = no limit). An IP whose retrieved passive DNS pages hold more distinct hostnames than the cap is skipped and reported `partial`; other IPs in the batch are kept. The copilot passes `max_pages=1`, `max_hosts=15` and its decision prompt now discourages reverse lookups unless co-hosting is the objective.
+- Applied api/celery/celery-agents image v1.2.12-136-g4d720d26. Live launch on 185.18.199.45 with `max_hosts=15`: 0 domains, partial "resolves 40+ hostnames (shared hosting); skipped". `make test`: 58 / 544 (4 skipped) / 147 / 82 passed.
+
+Next:
+- No copilot rerun on the real sketch (skipped by choice, to save VT/LLM quota). Neo4j flattens `nodeMetadata.*` keys: query them as ``n.`nodeMetadata.scan_id` ``. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
