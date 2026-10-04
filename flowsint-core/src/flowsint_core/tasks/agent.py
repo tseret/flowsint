@@ -58,6 +58,9 @@ def run_investigation_agent(run_id: str) -> None:
         run = session.get(AgentRun, uuid.UUID(run_id))
         if run is None or run.status != "running":
             return
+        # The API fails a run whose start is older than Celery's hard time limit.
+        run.started_at = datetime.now(timezone.utc)
+        session.commit()
         sketch_id = str(run.sketch_id)
         Logger.status(
             sketch_id, EventLevel.RUNNING, {"message": "Investigation agent started"}

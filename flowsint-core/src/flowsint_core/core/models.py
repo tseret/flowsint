@@ -170,6 +170,10 @@ class AgentRun(Base):
     finding_ids: Mapped[list] = mapped_column(JSON, default=list)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set when the worker picks the run up; NULL while it is still queued.
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
