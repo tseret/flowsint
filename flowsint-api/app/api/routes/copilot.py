@@ -14,10 +14,18 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from flowsint_core.core.celery import celery
+from flowsint_core.core.enums import EventLevel
 from flowsint_core.core.graph import GraphNode, create_graph_service
 from flowsint_core.core.graph.serializer import GraphSerializer
 from flowsint_core.core.llm.protocol import SubscriptionError
-from flowsint_core.core.models import AgentRun, CaseItem, Key, Profile, Sketch
+from flowsint_core.core.models import (
+    AgentRun,
+    CaseItem,
+    Key,
+    Profile,
+    Scan,
+    Sketch,
+)
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
     NotFoundError,
@@ -26,6 +34,7 @@ from flowsint_core.core.services import (
     create_enricher_service,
     create_sketch_service,
 )
+from flowsint_core.core.services.collaboration_service import CollaborationService
 from flowsint_core.core.services.copilot_service import (
     CopilotRequest,
     candidate_review_evidence,
@@ -581,3 +590,84 @@ def cancel_agent_run(
     db.commit()
     db.refresh(run)
     return _run_view(run)
+
+
+@router.post("/agent/{run_id}/undo")
+def undo_agent_run(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Soft-delete what a finished run added: entities and relationships its scans
+    created, and draft findings nobody has edited or reviewed. Idempotent."""
+    run = _agent_run(db, current_user, run_id)
+    _check_sketch(db, current_user, run.sketch_id, write=True)
+    if run.status not in ("completed", "failed", "cancelled", "undone"):
+        raise HTTPException(409, "Cancel the agent or let it finish before undoing it.")
+    scan_ids = [step["scan_id"] for step in run.steps if step.get("scan_id")]
+    # A cancelled step's scan keeps writing until it ends. Scans older than
+    # Celery's hard time limit lost their worker and never finish.
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=celery.conf.task_time_limit
+    )
+    if scan_ids and db.scalar(
+        select(Scan.id)
+        .where(
+            Scan.id.in_([UUID(scan_id) for scan_id in scan_ids]),
+            Scan.status.not_in((EventLevel.COMPLETED, EventLevel.FAILED)),
+            Scan.started_at > cutoff,
+        )
+        .limit(1)
+    ):
+        raise HTTPException(
+            409, "An enrichment from this run is still running. Undo it once it ends."
+        )
+    # A relationship's first observation names the scan that created it
+    # (observations are JSON with sorted keys).
+    [removed] = create_graph_service(sketch_id=str(run.sketch_id)).query(
+        """OPTIONAL MATCH (n)
+        WHERE n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+          AND n.`nodeMetadata.created_by_scan` IN $scan_ids
+        SET n.deleted_at = $now
+        WITH count(n) AS nodes
+        OPTIONAL MATCH (a)-[r]->(b)
+        WHERE r.sketch_id = $sketch_id AND r.deleted_at IS NULL
+          AND (a.deleted_at = $now OR b.deleted_at = $now
+               OR any(needle IN $needles WHERE r.observations[0] CONTAINS needle))
+        SET r.deleted_at = $now
+        RETURN nodes, count(r) AS relationships""",
+        {
+            "sketch_id": str(run.sketch_id),
+            "scan_ids": scan_ids,
+            "needles": [json.dumps({"scan_id": scan_id})[1:-1] for scan_id in scan_ids],
+            "now": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    # Version 1 means untouched since the agent wrote it; edited or reviewed
+    # findings carry human work and stay.
+    findings = db.scalars(
+        select(CaseItem)
+        .where(
+            CaseItem.id.in_([UUID(item_id) for item_id in run.finding_ids]),
+            CaseItem.sketch_id == run.sketch_id,
+            CaseItem.version == 1,
+        )
+        .with_for_update()
+    ).all()
+    collaboration = CollaborationService(db)
+    for finding in findings:
+        collaboration.record(
+            finding.investigation_id,
+            current_user.id,
+            "deleted",
+            finding.id,
+            {"kind": finding.kind, "body": finding.body, "reason": "Agent run undone"},
+        )
+        db.delete(finding)
+    run.status = "undone"
+    db.commit()
+    db.refresh(run)
+    return {
+        **_run_view(run),
+        "removed": {**removed, "findings": len(findings)},
+    }

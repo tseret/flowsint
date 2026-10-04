@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Sparkles, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { copilotService } from '@/api/copilot-service'
+import { useConfirm } from '@/components/use-confirm-dialog'
 import { chatGPTSubscriptionService } from '@/api/chatgpt-subscription-service'
 import { useGraphStore } from '@/stores/graph-store'
 import { useGraphControls } from '@/stores/graph-controls-store'
@@ -23,11 +25,13 @@ import { ToolbarButton } from './toolbar'
 import { CopilotCandidates } from './copilot-candidates'
 
 const ACTIVE = ['running', 'publishing']
+const UNDOABLE = ['completed', 'failed', 'cancelled']
 
 export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const { canEdit } = usePermissions()
   const selected = useGraphStore((s) => s.selectedNodes)
   const queryClient = useQueryClient()
+  const { confirm } = useConfirm()
   const refetchGraph = useGraphControls((s) => s.refetchGraph)
   const [open, setOpen] = useState(false)
   const [objective, setObjective] = useState('')
@@ -105,6 +109,33 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to cancel the agent')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function undo() {
+    if (!run) return
+    if (
+      !(await confirm({
+        title: 'Undo this agent run?',
+        message:
+          'Removes the entities and relationships its enrichments created, and its draft findings nobody has edited or reviewed.'
+      }))
+    )
+      return
+    setBusy(true)
+    setError(null)
+    try {
+      const { removed, ...undone } = await copilotService.undoAgent(run.id)
+      queryClient.setQueryData(['copilot', 'agent', run.id], undone)
+      void queryClient.invalidateQueries({ queryKey: ['case-workspace'] })
+      refetchGraph()
+      toast.success(
+        `Removed ${removed.nodes} entities, ${removed.relationships} relationships and ${removed.findings} draft findings.`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to undo the agent run')
     } finally {
       setBusy(false)
     }
@@ -213,6 +244,11 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                 {run.status === 'running' && (
                   <Button variant="outline" size="sm" onClick={cancel} disabled={!canEdit || busy}>
                     Cancel
+                  </Button>
+                )}
+                {UNDOABLE.includes(run.status) && (
+                  <Button variant="outline" size="sm" onClick={undo} disabled={!canEdit || busy}>
+                    Undo run
                   </Button>
                 )}
                 {run.error && (
