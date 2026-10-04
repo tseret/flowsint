@@ -206,6 +206,108 @@ def test_agent_run_lost_past_agent_deadline_reads_as_failed(
         assert bool(body["finished_at"]) == (expected == "failed")
 
 
+def _finished_run(db_session, sketch_id, scan_ids):
+    from flowsint_core.core.models import CaseItem, Sketch
+
+    sketch = db_session.get(Sketch, UUID(sketch_id))
+    findings = [
+        CaseItem(
+            investigation_id=sketch.investigation_id,
+            sketch_id=sketch.id,
+            kind="finding",
+            body=f"Draft {index}",
+        )
+        for index in range(2)
+    ]
+    db_session.add_all(findings)
+    db_session.flush()
+    run = AgentRun(
+        sketch_id=sketch.id,
+        objective="Map this domain",
+        seed_ids=["domain-1"],
+        status="completed",
+        steps=[{"step": 1, "scan_id": scan_id} for scan_id in scan_ids],
+        finding_ids=[str(finding.id) for finding in findings],
+    )
+    db_session.add(run)
+    db_session.commit()
+    return str(run.id), findings
+
+
+def test_undo_removes_run_output_but_keeps_reviewed_findings(
+    client, db_session, backend
+):
+    from flowsint_core.core.models import CaseActivity, CaseItem
+
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    scan_id = str(uuid4())
+    run_id, (draft, reviewed) = _finished_run(db_session, sketch_id, [scan_id])
+    reviewed.assessment = "Confirmed by analyst"
+    db_session.commit()  # bumps version: human work
+    graph = backend[0]
+    graph.query.return_value = [{"nodes": 3, "relationships": 4}]
+
+    # Repeating it is harmless: nothing left to delete the second time.
+    first, second = (
+        client.post(f"/api/copilot/agent/{run_id}/undo", headers=headers)
+        for _ in range(2)
+    )
+    assert first.json()["status"] == second.json()["status"] == "undone"
+    assert first.json()["removed"] == {"nodes": 3, "relationships": 4, "findings": 1}
+    assert second.json()["removed"]["findings"] == 0
+    params = graph.query.call_args.args[1]
+    assert params["sketch_id"] == sketch_id
+    assert params["scan_ids"] == [scan_id]
+    assert params["needles"] == [f'"scan_id": "{scan_id}"']
+    db_session.expire_all()
+    assert db_session.get(CaseItem, draft.id) is None
+    assert db_session.get(CaseItem, reviewed.id) is not None
+    activity = db_session.query(CaseActivity).filter_by(item_id=draft.id).one()
+    assert activity.action == "deleted"
+
+
+@pytest.mark.parametrize(
+    "roles,status,scan_age,code",
+    [
+        ((Role.VIEWER,), "completed", None, 403),
+        ((Role.OWNER,), "running", None, 409),
+        ((Role.OWNER,), "publishing", None, 409),
+        ((Role.OWNER,), "cancelled", 60, 409),  # its last scan is still writing
+        ((Role.OWNER,), "cancelled", 2 * 3600, 200),  # that scan's worker died
+    ],
+)
+def test_undo_waits_for_run_and_scans_to_stop(
+    client, db_session, backend, roles, status, scan_age, code
+):
+    from flowsint_core.core.enums import EventLevel
+    from flowsint_core.core.models import CaseItem, Scan
+
+    headers, sketch_id = _seed_user(db_session, roles)
+    scan_id = uuid4()
+    run_id, findings = _finished_run(db_session, sketch_id, [str(scan_id)])
+    run = db_session.get(AgentRun, UUID(run_id))
+    run.status = status
+    if scan_age is not None:
+        db_session.add(
+            Scan(
+                id=scan_id,
+                status=EventLevel.PENDING,
+                sketch_id=UUID(sketch_id),
+                started_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                - timedelta(seconds=scan_age),
+            )
+        )
+    db_session.commit()
+    backend[0].query.return_value = [{"nodes": 0, "relationships": 0}]
+    response = client.post(f"/api/copilot/agent/{run_id}/undo", headers=headers)
+    assert response.status_code == code
+    db_session.expire_all()
+    assert backend[0].query.called == (code == 200)
+    assert (db_session.get(AgentRun, UUID(run_id)).status == "undone") == (code == 200)
+    remaining = [db_session.get(CaseItem, finding.id) for finding in findings]
+    assert all(remaining) == (code != 200)
+
+
 def test_candidate_review_is_read_only_and_sketch_scoped(client, db_session, backend):
     headers, sketch_id = _seed_user(db_session, (Role.VIEWER,))
     backend[0].query.return_value = [
