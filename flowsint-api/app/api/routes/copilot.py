@@ -36,6 +36,7 @@ from flowsint_core.core.services.type_registry_service import (
     create_type_registry_service,
 )
 from flowsint_core.core.vault import Vault
+from flowsint_core.tasks.agent import AGENT_DEADLINE_S
 from flowsint_enrichers import ENRICHER_REGISTRY
 from flowsint_enrichers.ip.to_ports_modat import (
     FIELDS,
@@ -457,17 +458,21 @@ def _run_view(run: AgentRun) -> dict[str, Any]:
     }
 
 
+# The task bounds every model and scan wait by AGENT_DEADLINE_S; only the final
+# publish writes run after it, so a run still active past this lost its worker.
+LOST_AFTER = timedelta(seconds=AGENT_DEADLINE_S, minutes=10)
+
+
 def _fail_if_lost(db: Session, run: AgentRun) -> AgentRun:
-    """Celery kills a task at its hard time limit, and acks_late is off, so a run
-    still active that long after it started lost its worker and never resumes.
-    Queued runs (no started_at) are left alone: they start when a worker returns."""
+    """Fail a run whose worker died. Queued runs (no started_at) are left alone:
+    they start once a worker is available."""
     now = datetime.now(timezone.utc)
     db.execute(
         update(AgentRun)
         .where(
             AgentRun.id == run.id,
             AgentRun.status.in_(("running", "publishing")),
-            AgentRun.started_at < now - timedelta(seconds=celery.conf.task_time_limit),
+            AgentRun.started_at < now - LOST_AFTER,
         )
         .values(
             status="failed",
