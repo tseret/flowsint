@@ -302,3 +302,11 @@ Done:
 
 Next:
 - Rows already stuck before this migration have no `started_at` and are not reaped; none exist locally. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-04 — show queued agent runs waiting for a worker
+Done:
+- Agent run responses now include `started_at`. The copilot sheet shows "Waiting for an agent worker. The run starts when one is available." while a run is `running` without `started_at`, instead of "Running · step 0 of N".
+- Applied api/celery/celery-agents/app images v1.2.12-133-g7fac3006. In-container check on Postgres: a queued row returns `started_at: null` and a started row returns its timestamp; the served bundle contains the new text. No browser check: no localhost:5173 tab was open.
+
+Next:
+- Open the copilot sheet with `celery-agents` stopped to see the waiting message. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
