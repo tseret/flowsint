@@ -9,7 +9,7 @@ from uuid import UUID
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -604,24 +604,31 @@ def undo_agent_run(
     _check_sketch(db, current_user, run.sketch_id, write=True)
     if run.status not in ("completed", "failed", "cancelled", "undone"):
         raise HTTPException(409, "Cancel the agent or let it finish before undoing it.")
-    scan_ids = [step["scan_id"] for step in run.steps if step.get("scan_id")]
-    # A cancelled step's scan keeps writing until it ends. Scans older than
-    # Celery's hard time limit lost their worker and never finish.
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-        seconds=celery.conf.task_time_limit
-    )
-    if scan_ids and db.scalar(
-        select(Scan.id)
-        .where(
+    scan_ids = {step["scan_id"] for step in run.steps if step.get("scan_id")}
+    # Cancelling does not revoke a step's scan: it may still be queued (no Scan
+    # row yet) or writing. Wait until each one ended or outlived Celery's hard
+    # time limit (its worker died). A run finished longer ago than that limit
+    # skips the check.
+    # ponytail: a scan still queued past the time limit is assumed never to run.
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=celery.conf.task_time_limit)
+    settled = db.scalar(
+        select(func.count(Scan.id)).where(
             Scan.id.in_([UUID(scan_id) for scan_id in scan_ids]),
-            Scan.status.not_in((EventLevel.COMPLETED, EventLevel.FAILED)),
-            Scan.started_at > cutoff,
+            or_(
+                Scan.status.in_((EventLevel.COMPLETED, EventLevel.FAILED)),
+                Scan.started_at <= cutoff.replace(tzinfo=None),
+            ),
         )
-        .limit(1)
+    )
+    if settled < len(scan_ids) and db.scalar(
+        select(func.coalesce(AgentRun.finished_at > cutoff, True)).where(
+            AgentRun.id == run.id
+        )
     ):
         raise HTTPException(
             409, "An enrichment from this run is still running. Undo it once it ends."
         )
+    scan_ids = sorted(scan_ids)
     # A relationship's first observation names the scan that created it
     # (observations are JSON with sorted keys).
     [removed] = create_graph_service(sketch_id=str(run.sketch_id)).query(
