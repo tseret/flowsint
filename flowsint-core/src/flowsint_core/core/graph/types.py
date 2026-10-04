@@ -17,8 +17,8 @@ class NodeMetadata(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     # Provenance, set once when the node is first created (see repository._build_node_query).
     origin: Optional[Literal["manual", "enricher"]] = None
-    scan_id: Optional[str] = None
-    enricher: Optional[str] = None
+    created_by_scan: Optional[str] = None
+    created_by_enricher: Optional[str] = None
 
     class Config:
         extra = "allow"

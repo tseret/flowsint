@@ -138,8 +138,8 @@ class Enricher(ABC):
                 provenance={
                     "origin": "enricher",
                     # Celery passes a UUID for single-enricher runs; Neo4j needs a string.
-                    "scan_id": str(self.scan_id),
-                    "enricher": self.name(),
+                    "created_by_scan": str(self.scan_id),
+                    "created_by_enricher": self.name(),
                 },
             )
 

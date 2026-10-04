@@ -46,8 +46,8 @@ def test_serializer():
         "nodeProperties.root": True,
         "nodeMetadata.created_at": created_at.isoformat(),
         "nodeMetadata.origin": None,
-        "nodeMetadata.scan_id": None,
-        "nodeMetadata.enricher": None,
+        "nodeMetadata.created_by_scan": None,
+        "nodeMetadata.created_by_enricher": None,
     }
 
     assert to_neo4j == expected

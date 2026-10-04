@@ -177,8 +177,8 @@ class TestProvenance:
             repository=repo,
             provenance={
                 "origin": "enricher",
-                "scan_id": "scan-1",
-                "enricher": "domain_to_ip",
+                "created_by_scan": "scan-1",
+                "created_by_enricher": "domain_to_ip",
             },
         )
         # Client-supplied metadata cannot forge provenance.
@@ -188,7 +188,7 @@ class TestProvenance:
                 nodeLabel="example.com",
                 nodeType="domain",
                 nodeProperties=Domain(domain="example.com"),
-                nodeMetadata=NodeMetadata(scan_id="forged"),
+                nodeMetadata=NodeMetadata(created_by_scan="forged"),
             )
         )
         # Enrichers re-create their input node, then create discoveries.
@@ -196,14 +196,14 @@ class TestProvenance:
         enricher.create_node_from_flowsint_type(Ip(address="1.1.1.1"))
 
         meta = {n.nodeLabel: n.nodeMetadata for n in manual.get_sketch_graph().nodes}
-        assert (meta["example.com"].origin, meta["example.com"].scan_id) == (
+        assert (meta["example.com"].origin, meta["example.com"].created_by_scan) == (
             "manual",
             None,
         )
         assert (
             meta["1.1.1.1"].origin,
-            meta["1.1.1.1"].scan_id,
-            meta["1.1.1.1"].enricher,
+            meta["1.1.1.1"].created_by_scan,
+            meta["1.1.1.1"].created_by_enricher,
         ) == ("enricher", "scan-1", "domain_to_ip")
 
 

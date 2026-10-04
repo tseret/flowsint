@@ -24,8 +24,8 @@ export type NodeMetadata = {
   [key: string]: unknown
   // Provenance, set once when the node is first created.
   origin?: 'manual' | 'enricher'
-  scan_id?: string
-  enricher?: string
+  created_by_scan?: string
+  created_by_enricher?: string
   created_at?: string
 }
 

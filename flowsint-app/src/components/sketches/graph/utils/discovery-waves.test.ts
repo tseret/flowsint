@@ -18,8 +18,13 @@ const makeNode = (id: string, nodeMetadata: NodeMetadata = {}): GraphNode => ({
   y: 0
 })
 
-const found = (id: string, scan_id: string, created_at: string) =>
-  makeNode(id, { origin: 'enricher', scan_id, enricher: `e-${scan_id}`, created_at })
+const found = (id: string, scan: string, created_at: string) =>
+  makeNode(id, {
+    origin: 'enricher',
+    created_by_scan: scan,
+    created_by_enricher: `e-${scan}`,
+    created_at
+  })
 
 const nodes = [
   makeNode('seed', { origin: 'manual', created_at: '2026-01-01T00:00:00Z' }),

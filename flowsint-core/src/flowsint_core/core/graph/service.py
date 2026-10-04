@@ -55,8 +55,8 @@ class GraphService:
             logger: Optional logger instance
             enable_batching: Enable batch operations
             type_resolver: Optional callable to resolve custom types by name
-            provenance: Optional {"origin", "scan_id", "enricher"} stamped as
-                nodeMetadata.* on nodes this service creates (first creation only)
+            provenance: Optional {"origin", "created_by_scan", "created_by_enricher"}
+                stamped as nodeMetadata.* on nodes this service creates (first creation only)
 
         Raises:
             ValueError: If repository is not provided
@@ -76,7 +76,7 @@ class GraphService:
     def _stamp_provenance(self, neo4j_node_dict: GraphDict) -> GraphDict:
         # Overwrite all three keys so a client-supplied nodeMetadata can't forge them.
         if self._provenance is not None:
-            for key in ("origin", "scan_id", "enricher"):
+            for key in ("origin", "created_by_scan", "created_by_enricher"):
                 neo4j_node_dict[f"nodeMetadata.{key}"] = self._provenance.get(key)
         return neo4j_node_dict
 

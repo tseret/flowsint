@@ -132,8 +132,8 @@ class TestBuildNodeQuery:
             "nodeType": "domain",
             "nodeMetadata.created_at": "2020-01-01T00:00:00",
             "nodeMetadata.origin": "enricher",
-            "nodeMetadata.scan_id": "scan-1",
-            "nodeMetadata.enricher": "domain_to_ip",
+            "nodeMetadata.created_by_scan": "scan-1",
+            "nodeMetadata.created_by_enricher": "domain_to_ip",
         }
 
         _, params = repo._build_node_query(node_obj, sketch_id="sketch-1")
@@ -143,8 +143,8 @@ class TestBuildNodeQuery:
         assert params["create_only"] == {
             "nodeMetadata.created_at": params["created_at"],
             "nodeMetadata.origin": "enricher",
-            "nodeMetadata.scan_id": "scan-1",
-            "nodeMetadata.enricher": "domain_to_ip",
+            "nodeMetadata.created_by_scan": "scan-1",
+            "nodeMetadata.created_by_enricher": "domain_to_ip",
         }
 
 

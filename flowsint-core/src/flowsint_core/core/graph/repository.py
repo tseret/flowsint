@@ -15,8 +15,8 @@ from .types import GraphDict
 CREATE_ONLY_PROPS = (
     "nodeMetadata.created_at",
     "nodeMetadata.origin",
-    "nodeMetadata.scan_id",
-    "nodeMetadata.enricher",
+    "nodeMetadata.created_by_scan",
+    "nodeMetadata.created_by_enricher",
 )
 
 

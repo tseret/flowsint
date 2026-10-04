@@ -13,11 +13,12 @@ export type DiscoveryWaves = {
 export function computeDiscoveryWaves(nodes: GraphNode[]): DiscoveryWaves {
   const runs = new Map<string, { enricher: string; firstSeen: number }>()
   for (const node of nodes) {
-    const { origin, scan_id, enricher, created_at } = node.nodeMetadata
-    if (origin !== 'enricher' || !scan_id) continue
+    const { origin, created_by_scan, created_by_enricher, created_at } = node.nodeMetadata
+    if (origin !== 'enricher' || !created_by_scan) continue
     const t = Date.parse(created_at ?? '') || Infinity
-    const run = runs.get(scan_id)
-    if (!run) runs.set(scan_id, { enricher: enricher ?? 'unknown', firstSeen: t })
+    const run = runs.get(created_by_scan)
+    if (!run)
+      runs.set(created_by_scan, { enricher: created_by_enricher ?? 'unknown', firstSeen: t })
     else if (t < run.firstSeen) run.firstSeen = t
   }
 
@@ -28,8 +29,11 @@ export function computeDiscoveryWaves(nodes: GraphNode[]): DiscoveryWaves {
 
   const waveOf = new Map<string, number>()
   for (const node of nodes) {
-    const { origin, scan_id } = node.nodeMetadata
-    waveOf.set(node.id, (origin === 'enricher' && scan_id && waveOfScan.get(scan_id)) || 0)
+    const { origin, created_by_scan } = node.nodeMetadata
+    waveOf.set(
+      node.id,
+      (origin === 'enricher' && created_by_scan && waveOfScan.get(created_by_scan)) || 0
+    )
   }
   return {
     waveOf,
