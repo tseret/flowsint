@@ -319,3 +319,11 @@ Done:
 
 Next:
 - No copilot rerun on the real sketch (skipped by choice, to save VT/LLM quota). Neo4j flattens `nodeMetadata.*` keys: query them as ``n.`nodeMetadata.scan_id` ``. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-04 — keep the first creating scan on graph nodes
+Done:
+- Node MERGE now sets `nodeMetadata.created_by_scan` once, on create, or when a scan revives a soft-deleted node. Later scans that re-merge the node only restamp `nodeMetadata.scan_id`. Existing nodes have no `created_by_scan`. Nodes created outside a scan (e.g. manual adds) leave it null.
+- Applied api/celery/celery-agents image v1.2.13-114-g343d1e5d. In-container smoke on a throwaway sketch, using the batched enricher path: create scan-a → (scan-a, scan-a); re-merge scan-b → (scan-a, scan-b); soft-delete + scan-c → (scan-c, scan-c); cleanup left 0 nodes. Live regression `test_first_creating_scan_survives_later_scans` runs only with `FLOWSINT_TEST_NEO4J_URI`.
+
+Next:
+- "Undo agent run": one route that soft-deletes nodes whose `created_by_scan` is in the run's step scan IDs, plus the run's findings. Team deployment still needs approval.
