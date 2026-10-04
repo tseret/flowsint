@@ -607,22 +607,27 @@ def undo_agent_run(
     scan_ids = {step["scan_id"] for step in run.steps if step.get("scan_id")}
     # Cancelling does not revoke a step's scan: it may still be queued (no Scan
     # row yet) or writing. Wait until each one ended or outlived Celery's hard
-    # time limit (its worker died). A run finished longer ago than that limit
-    # skips the check.
-    # ponytail: a scan still queued past the time limit is assumed never to run.
+    # time limit (its worker died).
+    # ponytail: a scan still queued that long after the run finished is assumed
+    # never to run; revoke step tasks on cancel if that ever proves wrong.
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=celery.conf.task_time_limit)
-    settled = db.scalar(
-        select(func.count(Scan.id)).where(
-            Scan.id.in_([UUID(scan_id) for scan_id in scan_ids]),
-            or_(
-                Scan.status.in_((EventLevel.COMPLETED, EventLevel.FAILED)),
-                Scan.started_at <= cutoff.replace(tzinfo=None),
+    rows, settled = db.execute(
+        select(
+            func.count(Scan.id),
+            func.count(Scan.id).filter(
+                or_(
+                    Scan.status.in_((EventLevel.COMPLETED, EventLevel.FAILED)),
+                    Scan.started_at <= cutoff.replace(tzinfo=None),
+                )
             ),
-        )
-    )
-    if settled < len(scan_ids) and db.scalar(
-        select(func.coalesce(AgentRun.finished_at > cutoff, True)).where(
-            AgentRun.id == run.id
+        ).where(Scan.id.in_([UUID(scan_id) for scan_id in scan_ids]))
+    ).one()
+    if settled < rows or (
+        rows < len(scan_ids)
+        and db.scalar(
+            select(func.coalesce(AgentRun.finished_at > cutoff, True)).where(
+                AgentRun.id == run.id
+            )
         )
     ):
         raise HTTPException(

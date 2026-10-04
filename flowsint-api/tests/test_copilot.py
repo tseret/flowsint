@@ -295,6 +295,7 @@ DEAD = 2 * 3600  # older than Celery's hard time limit
         ((Role.OWNER,), "cancelled", "PENDING", DEAD, 0, 200),  # its worker died
         ((Role.OWNER,), "cancelled", None, 0, 0, 409),  # still queued
         ((Role.OWNER,), "cancelled", None, 0, DEAD, 200),  # never picked up
+        ((Role.OWNER,), "cancelled", "PENDING", 60, DEAD, 409),  # picked up late
     ],
 )
 def test_undo_waits_for_run_and_scans_to_stop(
