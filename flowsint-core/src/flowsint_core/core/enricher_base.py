@@ -135,6 +135,12 @@ class Enricher(ABC):
             self._graph_service = create_graph_service(
                 sketch_id=self.sketch_id,
                 enable_batching=True,
+                provenance={
+                    "origin": "enricher",
+                    # Celery passes a UUID for single-enricher runs; Neo4j needs a string.
+                    "scan_id": str(self.scan_id),
+                    "enricher": self.name(),
+                },
             )
 
         # Params is filled synchronously by the constructor. This params is generally constructed of

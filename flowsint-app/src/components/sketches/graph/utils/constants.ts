@@ -38,6 +38,10 @@ export const CONSTANTS = {
   ZOOMED_OUT_SIZE_MULTIPLIER: 2.5
 }
 
+// Discovery wave rings: seeds (wave 0) are grey, enricher runs cycle through the rest.
+export const WAVE_SEED_COLOR = '#9ca3af'
+export const WAVE_RING_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#eab308', '#14b8a6']
+
 // Reusable objects to avoid allocations
 export const tempPos = { x: 0, y: 0 }
 export const tempDimensions = [0, 0]

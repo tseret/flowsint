@@ -22,6 +22,11 @@ type flagColor = keyof typeof flagColors
 // Same as NodeProperties above — backend-defined, not statically shaped.
 export type NodeMetadata = {
   [key: string]: unknown
+  // Provenance, set once when the node is first created.
+  origin?: 'manual' | 'enricher'
+  scan_id?: string
+  enricher?: string
+  created_at?: string
 }
 
 export type NodeShape = 'circle' | 'square' | 'hexagon' | 'triangle'

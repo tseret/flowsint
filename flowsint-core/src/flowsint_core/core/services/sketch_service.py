@@ -145,7 +145,9 @@ class SketchService(BaseService):
 
         try:
             graph_service = create_graph_service(
-                sketch_id=str(sketch_id), enable_batching=False
+                sketch_id=str(sketch_id),
+                enable_batching=False,
+                provenance={"origin": "manual"},
             )
             node_id = graph_service.create_node(node)
         except Exception as e:

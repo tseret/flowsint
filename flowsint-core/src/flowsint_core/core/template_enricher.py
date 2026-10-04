@@ -96,6 +96,8 @@ class TemplateEnricher(Enricher):
         vault: Optional[VaultProtocol] = None,
         params: Optional[Dict[str, Any]] = None,
     ) -> None:
+        # Set before super().__init__: the base init calls self.name() for provenance.
+        self.template = template
         super().__init__(
             sketch_id=sketch_id,
             scan_id=scan_id,
@@ -103,7 +105,6 @@ class TemplateEnricher(Enricher):
             params=params,
             params_schema=params_schema_from_secrets(template.secrets),
         )
-        self.template = template
         self.InputType = self._detect_type(self.template.input.type)
         self.OutputType = self._detect_type(self.template.output.type)
         self.request = self.template.request

@@ -125,6 +125,28 @@ class TestBuildNodeQuery:
         assert params["props"] == node_obj
         assert "created_at" in params
 
+    def test_build_node_query_keeps_creation_props_out_of_update(self):
+        repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+        node_obj = {
+            "nodeLabel": "example.com",
+            "nodeType": "domain",
+            "nodeMetadata.created_at": "2020-01-01T00:00:00",
+            "nodeMetadata.origin": "enricher",
+            "nodeMetadata.scan_id": "scan-1",
+            "nodeMetadata.enricher": "domain_to_ip",
+        }
+
+        _, params = repo._build_node_query(node_obj, sketch_id="sketch-1")
+
+        # Only applied ON CREATE: a re-created node keeps its first provenance.
+        assert params["props"] == {"nodeLabel": "example.com", "nodeType": "domain"}
+        assert params["create_only"] == {
+            "nodeMetadata.created_at": params["created_at"],
+            "nodeMetadata.origin": "enricher",
+            "nodeMetadata.scan_id": "scan-1",
+            "nodeMetadata.enricher": "domain_to_ip",
+        }
+
 
 class TestBuildRelationshipQuery:
     def test_build_relationship_query_structure(self):

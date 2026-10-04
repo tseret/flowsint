@@ -299,6 +299,8 @@ export interface NodeRenderParams {
   highlightLinks: Set<string>
   hoverNode: string | null
   rc: RenderContext
+  // Discovery wave ring color; undefined = no ring
+  waveColor?: string
 }
 
 // --- Card layout constants ---
@@ -384,7 +386,8 @@ const renderCardNode = (params: NodeRenderParams) => {
     theme,
     highlightNodes,
     hoverNode,
-    rc
+    rc,
+    waveColor
   } = params
   const isHighlighted = highlightNodes.has(node.id) || isSelected(node.id) || isCurrent(node.id)
   const isHovered = hoverNode === node.id || isCurrent(node.id)
@@ -415,6 +418,15 @@ const renderCardNode = (params: NodeRenderParams) => {
 
   const cardX = node.x - cardWidth / 2
   const cardY = node.y - cardHeight / 2
+
+  // Discovery wave ring (drawn under the highlight ring)
+  if (waveColor) {
+    const w = 2 / rc.globalScale
+    ctx.beginPath()
+    ctx.roundRect(cardX - w, cardY - w, cardWidth + w * 2, cardHeight + w * 2, borderRadius + w)
+    ctx.fillStyle = waveColor
+    ctx.fill()
+  }
 
   // Highlight ring
   if (isHighlighted) {
@@ -529,7 +541,8 @@ const renderDotNode = (params: NodeRenderParams) => {
     theme,
     highlightNodes,
     hoverNode,
-    rc
+    rc,
+    waveColor
   } = params
   const size = calculateNodeSize(
     node,
@@ -541,6 +554,15 @@ const renderDotNode = (params: NodeRenderParams) => {
   const isHighlighted = highlightNodes.has(node.id) || isSelected(node.id) || isCurrent(node.id)
   const isHovered = hoverNode === node.id || isCurrent(node.id)
   const shape: NodeShape = node.nodeShape ?? 'circle'
+
+  // Discovery wave ring (drawn under the highlight ring)
+  if (waveColor) {
+    const w = 2 / rc.globalScale
+    drawNodePath(ctx, node.x, node.y, size + w * 1.5, shape)
+    ctx.lineWidth = w
+    ctx.strokeStyle = waveColor
+    ctx.stroke()
+  }
 
   // Highlight ring
   if (isHighlighted) {
