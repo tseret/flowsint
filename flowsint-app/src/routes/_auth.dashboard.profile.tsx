@@ -10,6 +10,8 @@ import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { getDisplayName } from '@/lib/user-display'
 import { SESSION_QUERY_KEY } from '@/hooks/use-auth'
+import { Diagnostics } from '@/components/diagnostics'
+import { ChatGPTSubscription } from '@/components/chatgpt-subscription'
 
 export const Route = createFileRoute('/_auth/dashboard/profile')({
   component: ProfilePage
@@ -150,6 +152,8 @@ function ProfilePage() {
             </Button>
           </div>
         </form>
+        <ChatGPTSubscription />
+        <Diagnostics />
       </div>
     </main>
   )

@@ -38,6 +38,7 @@ import { sketchService } from '@/api/sketch-service'
 import { useParams } from '@tanstack/react-router'
 import { exportToPNG } from './graph/utils/export-to-png'
 import { PathFinder } from './graph/actions/path-finder'
+import { InvestigationCopilot } from './investigation-copilot'
 
 // Tooltip wrapper component to avoid repetition
 export const ToolbarButton = memo(function ToolbarButton({
@@ -62,6 +63,7 @@ export const ToolbarButton = memo(function ToolbarButton({
       <TooltipTrigger asChild>
         <div>
           <Button
+            aria-label={typeof tooltip === 'string' ? tooltip : undefined}
             onClick={onClick}
             disabled={disabled}
             variant="ghost"
@@ -110,6 +112,8 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
   const { id: sketchId } = useParams({ strict: false })
   const view = useGraphControls((s) => s.view)
   const setView = useGraphControls((s) => s.setView)
+  const showPivotServices = useGraphControls((s) => s.showPivotServices)
+  const setShowPivotServices = useGraphControls((s) => s.setShowPivotServices)
   const zoomToFit = useGraphControls((s) => s.zoomToFit)
   const zoomToSelection = useGraphControls((s) => s.zoomToSelection)
   const zoomIn = useGraphControls((s) => s.zoomIn)
@@ -341,6 +345,7 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
             badge={areMergeable ? selectedNodes.length : null}
           />
           <PathFinder />
+          {sketchId && <InvestigationCopilot key={sketchId} sketchId={sketchId} />}
           <Separator className="w-full" />
           <ToolbarButton
             icon={<NetworkIcon className="h-4 w-4 opacity-70" />}
@@ -368,6 +373,17 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
             toggled={hasFilters}
           />
         </Filters>
+        {view === 'graph' && (
+          <Button
+            size="sm"
+            variant={showPivotServices ? 'secondary' : 'ghost'}
+            className="h-7"
+            aria-pressed={showPivotServices}
+            onClick={() => setShowPivotServices(!showPivotServices)}
+          >
+            Show pivot services
+          </Button>
+        )}
       </FloatingBar>
 
       {/* Top right: Status, Export, Reload */}

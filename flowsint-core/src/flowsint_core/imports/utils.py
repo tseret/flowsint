@@ -1,13 +1,7 @@
-import re
-from typing import Optional
+from typing import Any, Optional
 
 from .entity_detection import detect_type
 from .types import EntityPreview
-
-
-def camel_to_screaming_snake(name):
-    s1 = re.sub(r"(?<!^)(?=[A-Z])", "_", name)
-    return s1.upper()
 
 
 def create_entity_preview(row_value: str) -> Optional[EntityPreview]:
@@ -26,7 +20,7 @@ def create_entity_preview(row_value: str) -> Optional[EntityPreview]:
 
         class UnknownType:
             @classmethod
-            def from_string(cls, value: str):
+            def from_string(cls, value: str) -> Any:
                 # fallback: return raw string or a minimal wrapper
                 return value
 

@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from dotenv import load_dotenv
 from tools.network.whoxy import WhoxyTool
@@ -27,21 +27,6 @@ class DomainToHistoryEnricher(Enricher):
     InputType = Domain
     OutputType = Domain
 
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
-
     @classmethod
     def required_params(cls) -> bool:
         return True
@@ -66,16 +51,16 @@ class DomainToHistoryEnricher(Enricher):
     def category(cls) -> str:
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find infos related to domains using whoxy api."""
         domains: List[OutputType] = []
         self._extracted_data = []  # Store all extracted data for postprocess
-        self._extracted_individuals = []  # Store extracted individuals for testing
-        self._extracted_organizations = []  # Store extracted organizations for testing
+        self._extracted_individuals: List[
+            Dict[str, Any]
+        ] = []  # Store extracted individuals for testing
+        self._extracted_organizations: List[
+            Dict[str, Any]
+        ] = []  # Store extracted organizations for testing
         api_key = self.get_secret("WHOXY_API_KEY", os.getenv("WHOXY_API_KEY"))
 
         for i, domain in enumerate(data):
@@ -111,7 +96,7 @@ class DomainToHistoryEnricher(Enricher):
                             self.__process_contacts_during_scan(extracted_info)
         return domains
 
-    def __process_contacts_during_scan(self, extracted_info: Dict[str, Any]):
+    def __process_contacts_during_scan(self, extracted_info: Dict[str, Any]) -> None:
         """Process contacts and extract individuals and organizations during scan method."""
         domain_name = extracted_info["domain"].domain
         contacts = extracted_info["contacts"]

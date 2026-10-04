@@ -1,7 +1,7 @@
-from typing import Dict, List
+from typing import Dict, List, cast
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
@@ -26,10 +26,6 @@ class DomainToWebsiteEnricher(Enricher):
     def category(cls) -> str:
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
-
     def _extract_page_info(self, html_content: str) -> Dict[str, any]:
         """Extract title, description, content and technologies from HTML."""
         soup = BeautifulSoup(html_content, "html.parser")
@@ -44,7 +40,7 @@ class DomainToWebsiteEnricher(Enricher):
         description = None
         meta_desc = soup.find("meta", attrs={"name": "description"})
         if meta_desc and meta_desc.get("content"):
-            description = meta_desc.get("content").strip()
+            description = cast(str, meta_desc.get("content")).strip()
 
         # Extract text content (remove scripts and styles)
         for script in soup(["script", "style"]):
@@ -59,7 +55,9 @@ class DomainToWebsiteEnricher(Enricher):
 
         # Check for common frameworks and libraries
         if soup.find("meta", attrs={"name": "generator"}):
-            generator = soup.find("meta", attrs={"name": "generator"}).get("content")
+            generator = cast(Tag, soup.find("meta", attrs={"name": "generator"})).get(
+                "content"
+            )
             if generator:
                 technologies.append(generator)
 
@@ -68,17 +66,17 @@ class DomainToWebsiteEnricher(Enricher):
             technologies.append("React")
 
         # Check for Vue.js
-        if soup.find(attrs={"data-v-"}):
+        if soup.find(attrs={"data-v-"}):  # type: ignore[call-overload]  # set attrs is legacy bs4 usage
             technologies.append("Vue.js")
 
         # Check for Angular
-        if soup.find(attrs={"ng-app"}) or soup.find(attrs={"ng-version"}):
+        if soup.find(attrs={"ng-app"}) or soup.find(attrs={"ng-version"}):  # type: ignore[call-overload]  # set attrs is legacy bs4 usage
             technologies.append("Angular")
 
         # Check for WordPress
         if soup.find(
             "meta",
-            attrs={"name": "generator", "content": lambda x: x and "WordPress" in x},
+            attrs={"name": "generator", "content": lambda x: x and "WordPress" in x},  # type: ignore[dict-item,return-value]  # lambda returns str|bool
         ):
             technologies.append("WordPress")
 

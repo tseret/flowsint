@@ -94,14 +94,17 @@ const NodeActions = memo(
         const val = value === flagValue ? null : value
         setFlagValue(val)
         try {
-          updateNode(node.id, { nodeFlag: val })
           const body = JSON.stringify({
             nodeId: node.id,
+            expected_version:
+              useGraphStore.getState().getNode(node.id)?.version ?? node.version ?? 0,
             updates: { nodeFlag: val } as Partial<GraphNode>
           })
-          await sketchService.updateNode(sketchId!, body)
+          const result = await sketchService.updateNode(sketchId!, body)
+          updateNode(node.id, { nodeFlag: val, version: result.node.version })
         } catch (e) {
-          console.log(e)
+          setFlagValue(node.nodeFlag)
+          toast.error(e instanceof Error ? e.message : 'Could not update flag')
         }
       },
       [node, flagValue, updateNode, sketchId]

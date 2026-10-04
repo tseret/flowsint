@@ -34,7 +34,9 @@ export async function fetchWithAuth(endpoint: string, options: RequestInit = {})
   }
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.detail || `Erreur ${response.status}`)
+    throw Object.assign(new Error(errorData.detail || `Erreur ${response.status}`), {
+      status: response.status
+    })
   }
   if (response.status === 204) {
     return null

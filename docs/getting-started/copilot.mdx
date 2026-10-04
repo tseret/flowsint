@@ -1,0 +1,102 @@
+---
+title: "Investigation copilot"
+description: "Run an autonomous passive investigation agent on selected entities and review its cited findings."
+---
+
+Select 1 to 10 entities in a sketch and choose **Investigate selected entities**
+(the sparkle button in the graph toolbar). Enter an objective, set **Maximum
+steps** (1 to 50, default 20) and choose **Run agent**.
+
+At each step the agent reads a compact view of the sketch graph, with the
+selected and newly found entities listed first, plus its past step outcomes. It
+then chooses one passive enricher and up to ten compatible sketch entities, and
+the run waits for that enrichment to finish. New entities appear on the graph as
+steps complete. The sheet shows each step's enricher, reason, entities, outcome,
+result count and errors exactly as reported. Choose **Cancel** to stop a running
+agent.
+
+The agent can only choose enrichers from a fixed passive allowlist: WHOIS and
+domain history, ASN/CIDR, and indexed third-party records such as VirusTotal,
+Shodan, InternetDB, ThreatFox and breach data. It never contacts target
+infrastructure directly. Lookups that need unconfigured keys are rejected before
+they run, and the agent picks another. When the agent decides it has enough
+evidence, or runs out of steps, it writes a markdown report that cites each claim
+as `[scan:<id>]`. It also adds up to five draft findings to the case with a
+pending review decision. Review and decide those findings in the case workspace.
+
+## Review services and indexed fingerprint matches
+
+Select a Port to inspect its endpoint, application protocol, readable banner,
+provider, observation/retrieval dates and recorded fingerprints. **Refresh from
+Modat (passive)** and **Refresh from Shodan (passive)** refresh indexed service
+records for the port’s owning IP. They require one unambiguous `HAS_PORT` owner
+matching the recorded host, edit permission and configured provider credentials.
+They can add other indexed ports on that same host; they do not probe the host.
+
+For recorded Modat services, choose a fingerprint and inspect **Exact Modat
+query**, then click **Search Modat index**. HASSH is selected by default when
+available. The server builds the query from stored service evidence, checks its
+version and executes one service-index request with the same port, protocol,
+transport and fingerprint. A single supported fingerprint is sufficient to
+return unverified candidates; the old related-IP connector’s three-family gate
+does not apply. No LLM is needed or charged for this lookup.
+
+Matches show their fingerprints beside the source values, readable banners,
+observation dates and provider references. They are leads for review: common
+software or configuration can produce shared hashes without common control.
+Choose **Save candidate as pending finding** to retain the exact query and
+supporting snapshot in the investigation, attached to the source service.
+Existing case review controls handle decisions. Query results never insert new
+IP graph nodes or query/enrich matched hosts automatically.
+
+The lookup reads one page of up to 50 indexed records, excludes the source IP,
+verifies returned endpoint/hash matches, and flags omitted or incomplete results.
+Provider limits, key errors and unusable responses are shown explicitly without
+billing/provider fallback. Stale service evidence requires reload before another
+search. Query syntax uses the service-index endpoint, where all filters apply to
+one service record; see the [Modat API reference](https://api.magnify.modat.io/).
+
+With IPs selected, **Review related IP evidence** in the copilot also shows these
+service controls alongside existing/imported Modat pivot and shared historical
+DNS paths in the current sketch. Existing graph associations can be recorded as
+pending, accepted or rejected findings; unchanged evidence restores its decision.
+ASN/port-only links do not establish an association. Graph review reads at most
+20 candidates, five paths per candidate and 50 services; truncation is flagged.
+
+Older Modat port records need a passive refresh to recover discarded fingerprints,
+banners and provider observation dates. Service evidence reloads when graph
+updates advance the port version, and a manual reload remains available.
+
+## Model connection and evidence
+
+The agent requires a connected ChatGPT subscription. Open **Profile → Copilot
+connection** and choose **Continue with ChatGPT**. Complete sign-in and consent,
+then return to Profile. The model picker lists models available to the connected
+account. The default is GPT-6.1 Sol with **medium** reasoning effort; if your
+account does not offer that model, choose an available model explicitly.
+
+Subscription usage counts against your ChatGPT allowance. A disconnected account,
+an unavailable model or an exhausted allowance produces an actionable error before
+the run starts. Flowsint never switches to paid API billing automatically. Saved
+accounts can be selected and reconnected from Profile, or disconnected there.
+Tokens are encrypted in the existing Vault storage and never exposed through its
+key list.
+
+This connection currently supports the local instance at `http://localhost:5173`.
+Shared remote team hosting needs the separate supported remote sign-in flow.
+Existing Codex sign-in credentials are not imported or reused.
+
+An empty result does not establish absence; failed, partial or truncated steps
+need further review. Vault values are never included in evidence, and fields that
+look like credentials are removed before graph context is sent to the model.
+
+## Permissions and safety
+
+Starting and cancelling a run require edit permission on the investigation.
+Readers can view runs. The API rechecks the selected entity IDs and the sketch
+scope.
+
+The agent has no tools for arbitrary code, shell, Cypher or URL execution.
+Provider and graph text is treated as evidence, not as instructions. Each step
+is revalidated against the allowlist and restricted to compatible entities in the
+same sketch; the agent never reruns an enricher on the same entity.

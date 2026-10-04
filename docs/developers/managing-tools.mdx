@@ -76,11 +76,13 @@ Here's a simplified view of what `DockerTool` provides:
 class DockerTool(Tool):
     """Base class for tools that run in Docker containers."""
 
-    def __init__(self, image: str, default_tag: str = "latest"):
-        """Initialize with Docker image information."""
-        self.image = image
-        self.default_tag = default_tag
-        self.docker_client = docker.from_env()
+    image: str  # set by subclasses
+    default_tag = "latest"
+
+    def __init__(self):
+        """Connect to Docker; uses the class's image and default_tag."""
+        self.image = f"{self.image}:{self.default_tag}"
+        self.client = docker.from_env()
 
     def install(self) -> None:
         """Pull the Docker image if not already present."""
@@ -215,14 +217,9 @@ class MySubdomainTool(DockerTool):
     """Wrapper for a Docker-based subdomain enumeration tool."""
 
     image = "org/subdomain-scanner"
-    default_tag = "latest"
-
-    def __init__(self):
-        """Initialize the tool with Docker image information."""
-        super().__init__(self.image, self.default_tag)
 ```
 
-The `image` and `default_tag` class attributes tell `DockerTool` which Docker image to use. When you instantiate the tool, it will automatically connect to the Docker daemon.
+The `image` class attribute (plus an optional `default_tag`, `"latest"` by default) tells `DockerTool` which Docker image to use. No `__init__` is needed: instantiating the tool connects to the Docker daemon automatically.
 
 ### Implementing the launch method
 

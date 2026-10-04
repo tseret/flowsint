@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 
 from ..llm import ChatMessage as LLMChatMessage
 from ..llm import LLMProvider, MessageRole, create_llm_provider
+from ..llm.protocol import SubscriptionError
 from ..models import Chat, ChatMessage
 from ..repositories import ChatRepository
 from .base import BaseService
 from .exceptions import NotFoundError
+from .vault_service import VaultService
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a CTI/OSINT investigator and you are trying to investigate on a "
@@ -31,7 +33,13 @@ class ChatService(BaseService):
     Service for chat CRUD operations and AI message streaming.
     """
 
-    def __init__(self, db: Session, chat_repo: ChatRepository, vault_service, **kwargs):
+    def __init__(
+        self,
+        db: Session,
+        chat_repo: ChatRepository,
+        vault_service: VaultService,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(db, **kwargs)
         self._chat_repo = chat_repo
         self._vault_service = vault_service
@@ -193,10 +201,29 @@ class ChatService(BaseService):
         return messages
 
     def get_llm_provider(self, owner_id: UUID) -> LLMProvider:
+        from ..llm.providers.chatgpt_subscription import ChatGPTSubscriptionProvider
+        from .chatgpt_subscription_service import ChatGPTSubscriptionService
+
+        subscription = ChatGPTSubscriptionService(self._db).get_provider_data(owner_id)
+        if subscription is not None:
+            return ChatGPTSubscriptionProvider(**subscription)
         provider_name = os.environ.get("LLM_PROVIDER", "mistral")
         vault_key = f"{provider_name.upper()}_API_KEY"
         api_key = self._vault_service.get_secret(owner_id, vault_key)
         return create_llm_provider(provider=provider_name, api_key=api_key)
+
+    def get_subscription_provider(self, owner_id: UUID) -> LLMProvider:
+        """ChatGPT subscription only: never falls back to a paid API key."""
+        from ..llm.providers.chatgpt_subscription import ChatGPTSubscriptionProvider
+        from .chatgpt_subscription_service import ChatGPTSubscriptionService
+
+        subscription = ChatGPTSubscriptionService(self._db).get_provider_data(owner_id)
+        if subscription is None:
+            raise SubscriptionError(
+                "The investigation agent requires ChatGPT subscription mode. "
+                "Switch it on in Profile. No paid API fallback was used."
+            )
+        return ChatGPTSubscriptionProvider(**subscription)
 
     async def stream_response(
         self,
@@ -213,9 +240,14 @@ class ChatService(BaseService):
         yield f"data: {json.dumps({'type': 'start', 'messageId': message_id})}\n\n"
         yield f"data: {json.dumps({'type': 'text-start', 'id': text_id})}\n\n"
 
-        async for token in provider.stream(llm_messages):
-            accumulated.append(token)
-            yield f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': token})}\n\n"
+        try:
+            async for token in provider.stream(llm_messages):
+                accumulated.append(token)
+                yield f"data: {json.dumps({'type': 'text-delta', 'id': text_id, 'delta': token})}\n\n"
+        except SubscriptionError as exc:
+            yield f"data: {json.dumps({'type': 'error', 'errorText': str(exc)})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         yield f"data: {json.dumps({'type': 'text-end', 'id': text_id})}\n\n"
         yield f"data: {json.dumps({'type': 'finish'})}\n\n"

@@ -130,6 +130,7 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     }))
   )
 
+  const changes = useGraphStore((s) => s.changes)
   const { theme } = useTheme()
 
   const selectedNodeIds = useMemo(() => new Set(selectedNodes.map((n) => n.id)), [selectedNodes])
@@ -293,15 +294,21 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     if (hoverHighlightNodes.size > 0) return hoverHighlightNodes
     const merged = new Set<string>(currentNodeHighlights.nodes)
     pathHighlightNodes.forEach((id) => merged.add(id))
+    changes?.addedNodes.forEach((id) => merged.add(id))
+    changes?.updatedNodes.forEach((id) => merged.add(id))
     return merged
-  }, [hoverHighlightNodes, currentNodeHighlights.nodes, pathHighlightNodes])
+  }, [hoverHighlightNodes, currentNodeHighlights.nodes, pathHighlightNodes, changes])
 
   const highlightLinks = useMemo(() => {
     if (hoverHighlightLinks.size > 0) return hoverHighlightLinks
     const merged = new Set<string>(currentNodeHighlights.links)
     pathHighlightLinks.forEach((id) => merged.add(id))
+    const changedEdges = new Set([...(changes?.addedEdges || []), ...(changes?.updatedEdges || [])])
+    edges.forEach((edge) => {
+      if (changedEdges.has(edge.id)) merged.add(`${edge.source}-${edge.target}`)
+    })
     return merged
-  }, [hoverHighlightLinks, currentNodeHighlights.links, pathHighlightLinks])
+  }, [hoverHighlightLinks, currentNodeHighlights.links, pathHighlightLinks, changes, edges])
 
   const { tooltip, showTooltip, hideTooltip } = useTooltip(graphRef)
 

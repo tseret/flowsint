@@ -8,7 +8,7 @@ from sqlalchemy import exists
 from ..models import Key
 from .base import BaseRepository
 
-CHAT_KEY_NAMES = ["MISTRAL_API_KEY"]
+CHAT_KEY_NAMES = ["MISTRAL_API_KEY", "OPENAI_API_KEY"]
 
 
 class KeyRepository(BaseRepository[Key]):
@@ -33,6 +33,8 @@ class KeyRepository(BaseRepository[Key]):
         )
 
     def chat_key_exist(self, owner_id: UUID) -> bool:
-        return self._db.query(
-            exists().where(Key.owner_id == owner_id, Key.name.in_(CHAT_KEY_NAMES))
-        ).scalar()
+        return bool(
+            self._db.query(
+                exists().where(Key.owner_id == owner_id, Key.name.in_(CHAT_KEY_NAMES))
+            ).scalar()
+        )

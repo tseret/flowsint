@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from tools.network.httpx import HttpxTool
 
@@ -15,23 +15,6 @@ class TechDetectEnricher(Enricher):
 
     InputType = Website
     OutputType = Technology
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-            **kwargs,
-        )
 
     @classmethod
     def name(cls) -> str:
@@ -109,7 +92,9 @@ class TechDetectEnricher(Enricher):
         return results
 
     def postprocess(
-        self, results: List[OutputType], original_input: List[InputType] = None
+        self,
+        results: List[OutputType],
+        original_input: Optional[List[InputType]] = None,
     ) -> List[OutputType]:
         for tech in results:
             if not self._graph_service:

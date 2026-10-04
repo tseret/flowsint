@@ -7,13 +7,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import UUID
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
 from ..graph import GraphNode, create_graph_service
+from ..graph.types import NodeVersionConflict
 from ..models import Sketch
 from ..repositories import InvestigationRepository, SketchRepository
 from .base import BaseService
 from .exceptions import (
+    ConflictError,
     DatabaseError,
     NotFoundError,
     ValidationError,
@@ -145,18 +148,22 @@ class SketchService(BaseService):
 
         try:
             graph_service = create_graph_service(
-                sketch_id=str(sketch_id), enable_batching=False
+                sketch_id=str(sketch_id),
+                enable_batching=False,
+                type_resolver=self._type_registry.build_type_resolver(user_id)
+                if self._type_registry
+                else None,
             )
             node_id = graph_service.create_node(node)
+            stored_nodes = graph_service.get_nodes_by_ids([node_id]) if node_id else []
         except Exception as e:
             print(e)
             raise DatabaseError(f"Database error: {str(e)}")
 
-        if not node_id:
+        if not stored_nodes:
             raise ValidationError("Node creation failed")
 
-        node.id = node_id
-        return {"status": "node added", "node": node}
+        return {"status": "node added", "node": stored_nodes[0]}
 
     def add_relationship(
         self,
@@ -187,17 +194,30 @@ class SketchService(BaseService):
         return {"status": "edge added", "edge": result}
 
     def update_node(
-        self, sketch_id: UUID, user_id: UUID, node_id: str, updates: Dict[str, Any]
+        self,
+        sketch_id: UUID,
+        user_id: UUID,
+        node_id: str,
+        updates: Dict[str, Any],
+        expected_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         self._get_sketch_with_permission(sketch_id, user_id, ["update"])
 
         try:
             graph_service = create_graph_service(
-                sketch_id=str(sketch_id), enable_batching=False
+                sketch_id=str(sketch_id),
+                enable_batching=False,
+                type_resolver=self._type_registry.build_type_resolver(user_id)
+                if self._type_registry
+                else None,
             )
             updated_element_id = graph_service.update_node(
-                element_id=node_id, updates=updates
+                element_id=node_id, updates=updates, expected_version=expected_version
             )
+        except NodeVersionConflict as e:
+            raise ConflictError(str(e)) from e
+        except PydanticValidationError as e:
+            raise ValidationError("Invalid entity properties") from e
         except Exception as e:
             print(f"Node update error: {e}")
             raise DatabaseError("Failed to update node")
@@ -205,7 +225,15 @@ class SketchService(BaseService):
         if not updated_element_id:
             raise NotFoundError("Node not found or not accessible")
 
-        return {"status": "node updated", "node": {"id": updated_element_id}}
+        return {
+            "status": "node updated",
+            "node": {
+                "id": updated_element_id,
+                "version": expected_version + 1
+                if expected_version is not None
+                else None,
+            },
+        }
 
     def update_node_positions(
         self, sketch_id: UUID, user_id: UUID, positions: List[Dict[str, Any]]

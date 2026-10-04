@@ -5,6 +5,7 @@ from tools.network.asnmap import AsnmapTool
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
+from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.asn import ASN
 from flowsint_types.domain import Domain
@@ -22,13 +23,12 @@ class DomainToAsnEnricher(Enricher):
         self,
         sketch_id: Optional[str] = None,
         scan_id: Optional[str] = None,
-        vault=None,
+        vault: Optional[VaultProtocol] = None,
         params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             sketch_id=sketch_id,
             scan_id=scan_id,
-            params_schema=self.get_params_schema(),
             vault=vault,
             params=params,
         )
@@ -58,10 +58,6 @@ class DomainToAsnEnricher(Enricher):
     def category(cls) -> str:
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
         self.domain_asn_mapping = []
@@ -76,13 +72,9 @@ class DomainToAsnEnricher(Enricher):
                 asn_data = asnmap.launch(domain.domain, type="domain", api_key=api_key)
 
                 if asn_data and "as_number" in asn_data:
-                    # Parse ASN number from string like "AS16276" to integer 16276
-                    asn_string = asn_data["as_number"]
-                    asn_number = int(asn_string.replace("AS", "").replace("as", ""))
-
-                    # Create ASN object with correct field mapping
+                    # asn_str is required; the validator normalizes "as16276" and derives number
                     asn = ASN(
-                        number=asn_number,
+                        asn_str=asn_data["as_number"],
                         name=asn_data.get("as_name", ""),
                         country=asn_data.get("as_country", ""),
                         description=asn_data.get("as_name", ""),
@@ -114,7 +106,7 @@ class DomainToAsnEnricher(Enricher):
         return results
 
     def postprocess(
-        self, results: List[OutputType], input_data: List[InputType] = None
+        self, results: List[OutputType], input_data: Optional[List[InputType]] = None
     ) -> List[OutputType]:
         # Create Neo4j relationships between domains and their corresponding ASNs
         if self._graph_service:

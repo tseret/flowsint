@@ -1,5 +1,7 @@
 import asyncio
 import uuid
+from datetime import datetime, timezone
+from time import monotonic
 from typing import Any, Dict, List, Optional
 
 from celery import Task, states
@@ -32,6 +34,7 @@ def run_enricher(
     owner_id: Optional[str] = None,
     params: Optional[dict] = None,
 ) -> Dict[str, Any]:
+    started = monotonic()
     session = SessionLocal()
 
     try:
@@ -57,6 +60,7 @@ def run_enricher(
                     sketch_id,  # type: ignore[arg-type]
                     {"message": f"Failed to create vault: {str(e)}"},
                 )
+                raise RuntimeError("Could not open credential vault") from e
 
         if not ENRICHER_REGISTRY.enricher_exists(enricher_name):
             raise ValueError(f"Enricher '{enricher_name}' not found in registry")
@@ -71,13 +75,42 @@ def run_enricher(
 
         # Deserialize objects back into Pydantic models
         # The preprocess method in Enricher will handle these already-parsed objects
+        enricher.defer_status_until_commit = True
         results = asyncio.run(enricher.execute(values=serialized_objects))
 
-        scan.status = EventLevel.COMPLETED
+        summary = getattr(enricher, "execution_summary", None) or {
+            "outcome": "results" if results else "no_matches",
+            "input_count": len(serialized_objects),
+            "output_count": len(results),
+        }
+        summary = {
+            "provider": enricher_name,
+            "enricher": enricher_name,
+            "scan_id": str(scan_id),
+            "duration_ms": round((monotonic() - started) * 1000),
+            "errors": [],
+            **summary,
+        }
+        scan.status = (
+            EventLevel.FAILED
+            if summary["outcome"] in {"failed", "missing_credentials", "quota_exceeded"}
+            else EventLevel.COMPLETED
+        )
         scan.details = to_json_serializable(results)
+        scan.summary = to_json_serializable(summary)
+        scan.completed_at = datetime.now(timezone.utc)
+        scan.error = (
+            "; ".join(issue["message"] for issue in summary.get("errors", [])) or None
+        )
         session.commit()
+        if sketch_id:
+            Logger.status(
+                sketch_id,
+                EventLevel.WARNING if summary["outcome"] == "partial" else scan.status,
+                {"message": "Enrichment finished", "summary": scan.summary},
+            )
 
-        return {"result": scan.details}
+        return {"result": scan.details, "summary": scan.summary}
 
     except Exception as ex:
         session.rollback()
@@ -89,10 +122,25 @@ def run_enricher(
         )
         if failed_scan:
             failed_scan.status = EventLevel.FAILED
-            # Scan.error is a legacy Column(), not Mapped[], so the stubs read
-            # it as Column[str] rather than str.
-            failed_scan.error = error_logs  # type: ignore[assignment]
+            failed_scan.completed_at = datetime.now(timezone.utc)
+            failed_scan.summary = {
+                "provider": enricher_name,
+                "enricher": enricher_name,
+                "scan_id": str(failed_scan.id),
+                "duration_ms": round((monotonic() - started) * 1000),
+                "outcome": "failed",
+                "errors": [{"outcome": "failed", "message": error_logs}],
+                "input_count": len(serialized_objects),
+                "output_count": 0,
+            }
+            failed_scan.error = error_logs
             session.commit()
+            if sketch_id:
+                Logger.status(
+                    sketch_id,
+                    EventLevel.FAILED,
+                    {"message": "Enrichment failed", "summary": failed_scan.summary},
+                )
 
         self.update_state(state=states.FAILURE)
         raise ex
@@ -111,6 +159,7 @@ def run_template_enricher(
     params: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """Run an enricher defined by a YAML template stored in the database."""
+    started = monotonic()
     session = SessionLocal()
 
     try:
@@ -133,6 +182,7 @@ def run_template_enricher(
                 sketch_id,  # type: ignore[arg-type]
                 {"message": f"Failed to create vault: {str(e)}"},
             )
+            raise RuntimeError("Could not open credential vault") from e
 
         # Load template from database
         template_service = create_enricher_template_service(session)
@@ -152,13 +202,42 @@ def run_template_enricher(
             params=params or {},
         )
 
+        enricher.defer_status_until_commit = True
         results = asyncio.run(enricher.execute(values=serialized_objects))
 
-        scan.status = EventLevel.COMPLETED
+        summary = getattr(enricher, "execution_summary", None) or {
+            "outcome": "results" if results else "no_matches",
+            "input_count": len(serialized_objects),
+            "output_count": len(results),
+        }
+        summary = {
+            "provider": template_name,
+            "enricher": template_name,
+            "scan_id": str(scan_id),
+            "duration_ms": round((monotonic() - started) * 1000),
+            "errors": [],
+            **summary,
+        }
+        scan.status = (
+            EventLevel.FAILED
+            if summary["outcome"] in {"failed", "missing_credentials", "quota_exceeded"}
+            else EventLevel.COMPLETED
+        )
         scan.details = to_json_serializable(results)
+        scan.summary = to_json_serializable(summary)
+        scan.completed_at = datetime.now(timezone.utc)
+        scan.error = (
+            "; ".join(issue["message"] for issue in summary.get("errors", [])) or None
+        )
         session.commit()
+        if sketch_id:
+            Logger.status(
+                sketch_id,
+                EventLevel.WARNING if summary["outcome"] == "partial" else scan.status,
+                {"message": "Enrichment finished", "summary": scan.summary},
+            )
 
-        return {"result": scan.details}
+        return {"result": scan.details, "summary": scan.summary}
 
     except Exception as ex:
         session.rollback()
@@ -170,8 +249,25 @@ def run_template_enricher(
         )
         if failed_scan:
             failed_scan.status = EventLevel.FAILED
-            failed_scan.error = error_logs  # type: ignore[assignment]
+            failed_scan.completed_at = datetime.now(timezone.utc)
+            failed_scan.summary = {
+                "provider": template_name,
+                "enricher": template_name,
+                "scan_id": str(failed_scan.id),
+                "duration_ms": round((monotonic() - started) * 1000),
+                "outcome": "failed",
+                "errors": [{"outcome": "failed", "message": error_logs}],
+                "input_count": len(serialized_objects),
+                "output_count": 0,
+            }
+            failed_scan.error = error_logs
             session.commit()
+            if sketch_id:
+                Logger.status(
+                    sketch_id,
+                    EventLevel.FAILED,
+                    {"message": "Enrichment failed", "summary": failed_scan.summary},
+                )
 
         self.update_state(state=states.FAILURE)
         raise ex

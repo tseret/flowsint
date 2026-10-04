@@ -5,11 +5,14 @@ This module provides a repository pattern implementation for Neo4j,
 handling raw GraphDict object and operations with batching support.
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from pydantic_core import to_jsonable_python
+
 from .connection import Neo4jConnection
-from .types import GraphDict
+from .types import GraphDict, NodeVersionConflict
 
 
 class Neo4jGraphRepository:
@@ -108,18 +111,58 @@ class Neo4jGraphRepository:
         node_label = node_obj.get("nodeLabel")
         node_type = node_obj.get("nodeType")
 
-        # paramètres Neo4j
+        identity_fields = {
+            key: value
+            for key, value in node_obj.items()
+            if key.startswith("nodeProperties.")
+        }
+        # Adopt legacy nodes only when the canonical primary properties match.
+        from .serializer import GraphSerializer
+
+        try:
+            entity = GraphSerializer.parse_flowsint_type(
+                {
+                    key.removeprefix("nodeProperties."): value
+                    for key, value in identity_fields.items()
+                },
+                str(node_type),
+            )
+            # Stored properties are JSON-mode; IPv4Network etc. are not Neo4j values.
+            identity = to_jsonable_python(GraphSerializer.identity_properties(entity))
+        except (ValueError, TypeError):
+            identity = {"nodeLabel": node_label}
+        legacy_identity = {
+            ("nodeLabel" if key == "nodeLabel" else f"nodeProperties.{key}"): value
+            for key, value in identity.items()
+        }
         params = {
-            "props": node_obj,  # flat with keys containing "."
+            "props": {
+                key: value
+                for key, value in node_obj.items()
+                if key not in ("version", "x", "y")
+            },
+            "x": node_obj.get("x") if node_obj.get("x") is not None else 100,
+            "y": node_obj.get("y") if node_obj.get("y") is not None else 100,
             "node_label": node_label,
+            "node_key": node_obj.get("nodeKey", node_label),
+            "legacy_identity": legacy_identity,
             "sketch_id": sketch_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         query = f"""
-        MERGE (n:{node_type} {{ nodeLabel: $node_label, sketch_id: $sketch_id }})
-        ON CREATE SET n.created_at = $created_at
+        OPTIONAL MATCH (legacy:{node_type} {{sketch_id: $sketch_id}})
+        WHERE legacy.nodeKey IS NULL AND all(key IN keys($legacy_identity) WHERE legacy[key] = $legacy_identity[key])
+        WITH head(collect(legacy)) AS legacy
+        FOREACH (old IN CASE WHEN legacy IS NULL THEN [] ELSE [legacy] END | SET old.nodeKey = $node_key)
+        MERGE (n:{node_type} {{ nodeKey: $node_key, sketch_id: $sketch_id }})
+        ON CREATE SET n.created_at = $created_at, n.x = $x, n.y = $y,
+            n.`nodeMetadata.created_by_scan` = $props.`nodeMetadata.scan_id`
+        // A scan that revives a soft-deleted node owns it; later scans only restamp scan_id.
+        ON MATCH SET n.`nodeMetadata.created_by_scan` = CASE WHEN n.deleted_at IS NULL
+            THEN n.`nodeMetadata.created_by_scan` ELSE $props.`nodeMetadata.scan_id` END
         SET n += $props
+        SET n.version = coalesce(n.version, 0) + 1
         SET n.deleted_at = null
         RETURN elementId(n) AS id
         """
@@ -141,16 +184,26 @@ class Neo4jGraphRepository:
             "from_label": from_label,
             "to_label": to_label,
             "sketch_id": sketch_id,
-            "props": rel_obj,
+            "props": {
+                key: value for key, value in rel_obj.items() if key != "observation"
+            },
+            "from_key": rel_obj.get("from_key"),
+            "to_key": rel_obj.get("to_key"),
+            "observation": json.dumps(
+                rel_obj["observation"], sort_keys=True, default=str
+            )
+            if rel_obj.get("observation")
+            else None,
         }
 
         query = f"""
-        MATCH (from:{from_type} {{nodeLabel: $from_label, sketch_id: $sketch_id}})
-        WHERE from.deleted_at IS NULL
-        MATCH (to:{to_type} {{nodeLabel: $to_label, sketch_id: $sketch_id}})
-        WHERE to.deleted_at IS NULL
+        MATCH (from:{from_type} {{sketch_id: $sketch_id}})
+        WHERE from.deleted_at IS NULL AND (from.nodeKey = $from_key OR (from.nodeKey IS NULL AND from.nodeLabel = $from_label))
+        MATCH (to:{to_type} {{sketch_id: $sketch_id}})
+        WHERE to.deleted_at IS NULL AND (to.nodeKey = $to_key OR (to.nodeKey IS NULL AND to.nodeLabel = $to_label))
         MERGE (from)-[r:{rel_label} {{sketch_id: $sketch_id}}]->(to)
         SET r += $props
+        SET r.observations = CASE WHEN $observation IS NULL OR $observation IN coalesce(r.observations, []) THEN coalesce(r.observations, []) ELSE coalesce(r.observations, []) + [$observation] END
         SET r.deleted_at = null
         """
 
@@ -392,7 +445,11 @@ class Neo4jGraphRepository:
             return {"edges_created": 0, "errors": errors}
 
     def update_node(
-        self, element_id: str, updates: GraphDict, sketch_id: str
+        self,
+        element_id: str,
+        updates: GraphDict,
+        sketch_id: str,
+        expected_version: Optional[int] = None,
     ) -> Optional[str]:
         if not self._connection:
             return None
@@ -400,17 +457,37 @@ class Neo4jGraphRepository:
         query = """
         MATCH (n)
         WHERE elementId(n) = $element_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+        SET n.version = coalesce(n.version, 0)
+        WITH n
+        WHERE NOT $check_version OR n.version = $expected_version
         SET n += $props
+        SET n.version = n.version + 1
         RETURN elementId(n) AS id
         """
 
         params = {
             "element_id": element_id,
             "sketch_id": sketch_id,
-            "props": updates,
+            "props": {
+                key: value
+                for key, value in updates.items()
+                if key
+                not in ("version", "sketch_id", "nodeType", "deleted_at", "created_at")
+            },
+            "expected_version": expected_version
+            if expected_version is not None
+            else -1,
+            "check_version": expected_version is not None,
         }
 
         result = self._connection.query(query, params)
+        if not result and expected_version is not None:
+            exists = self._connection.query(
+                "MATCH (n) WHERE elementId(n) = $element_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL RETURN elementId(n) AS id",
+                {"element_id": element_id, "sketch_id": sketch_id},
+            )
+            if exists:
+                raise NodeVersionConflict("This entity changed. Reload before saving.")
         return result[0]["id"] if result else None
 
     def delete_nodes(self, node_ids: List[str], sketch_id: str) -> int:
@@ -715,7 +792,7 @@ class Neo4jGraphRepository:
         UNWIND $node_ids AS node_id
         MATCH (n)
         WHERE elementId(n) = node_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL
-        RETURN properties(n) as data
+        RETURN elementId(n) AS id, properties(n) as data
         """
 
         result = self._connection.query(
@@ -760,7 +837,11 @@ class Neo4jGraphRepository:
             SET {set_clause}
             RETURN elementId(n) as newElementId
             """
-            params = {"nodeId": new_node_id, "sketch_id": sketch_id, **properties}
+            params: Dict[str, Any] = {
+                "nodeId": new_node_id,
+                "sketch_id": sketch_id,
+                **properties,
+            }
         else:
             properties["created_at"] = datetime.now(timezone.utc).isoformat()
             create_query = f"""
@@ -838,7 +919,7 @@ class Neo4jGraphRepository:
                 },
             )
 
-        return new_node_element_id
+        return str(new_node_element_id)
 
     def get_neighbors(self, node_id: str, sketch_id: str) -> Dict[str, Any]:
         """
@@ -977,11 +1058,11 @@ class Neo4jGraphRepository:
             record = result.single()
             return record["total"] if record else 0
 
-    def __enter__(self):
+    def __enter__(self) -> "Neo4jGraphRepository":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush_batch()

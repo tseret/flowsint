@@ -434,3 +434,25 @@ class TestPerformance:
         # Should make fewer calls than number of logs (due to batching)
         # With batch_size=5 and 50 logs, should make ~10 batch inserts
         assert mock_db_session.add_all.call_count <= 15  # Some tolerance
+
+
+def test_completed_can_defer_status_until_scan_is_committed(
+    logger_instance, monkeypatch
+):
+    status = Mock()
+    monkeypatch.setattr(logger_instance, "status", status)
+    logger_instance.completed("sketch", {"message": "Done"}, publish_status=False)
+    status.assert_not_called()
+    logger_instance.completed("sketch", {"message": "Done"})
+    status.assert_called_once_with("sketch", EventLevel.COMPLETED, {"message": "Done"})
+
+
+def test_status_keeps_summary_for_failed_runs(logger_instance):
+    summary = {"outcome": "quota_exceeded"}
+    with patch("flowsint_core.tasks.event.emit_status_event_task") as emit:
+        logger_instance.status("sketch", EventLevel.FAILED, {"summary": summary})
+    assert emit.apply.call_args.kwargs["args"][1:] == [
+        "sketch",
+        EventLevel.FAILED,
+        {"summary": summary},
+    ]

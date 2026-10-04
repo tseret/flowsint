@@ -22,6 +22,7 @@ def test_analysis_service_create_uses_timezone_aware_timestamps():
         investigation_repo=MagicMock(),
     )
     service._check_permission = MagicMock()
+    service.db.get.return_value = None
 
     analysis = service.create(
         title="Summary",
@@ -86,6 +87,7 @@ def test_investigation_service_update_uses_timezone_aware_timestamp():
         profile_repo=MagicMock(),
     )
     service._check_permission = MagicMock()
+    service.db.get.return_value = None
 
     service.update(
         investigation_id=uuid4(),

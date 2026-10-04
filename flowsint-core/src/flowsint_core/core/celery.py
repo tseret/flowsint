@@ -10,6 +10,8 @@ celery = Celery(
         "flowsint_core.tasks.event",
         "flowsint_core.tasks.enricher",
         "flowsint_core.tasks.flow",
+        "flowsint_core.tasks.diagnostics",
+        "flowsint_core.tasks.agent",
     ],
 )
 
@@ -23,4 +25,7 @@ celery.conf.update(
     task_time_limit=3600,  # 1 hour
     worker_max_tasks_per_child=1000,
     worker_prefetch_multiplier=4,  # Allow each worker to prefetch up to 4 tasks
+    # Agents wait on their own run_enricher tasks; a separate queue and worker
+    # keep them from occupying the threads those child tasks need.
+    task_routes={"run_investigation_agent": {"queue": "agents"}},
 )

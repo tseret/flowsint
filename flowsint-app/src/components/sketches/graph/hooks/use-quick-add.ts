@@ -141,7 +141,7 @@ export const useQuickAdd = (sketchId?: string) => {
       const response = await sketchService.addNode(sketchId, JSON.stringify(node))
       const newNode: GraphNode = response.node
       if (newNode) {
-        replaceNode(tempId, newNode.id, newNode.nodeProperties)
+        replaceNode(tempId, newNode)
       }
     } catch {
       toast.error('Could not create node.')

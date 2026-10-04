@@ -1,5 +1,5 @@
 import { useLoaderData } from '@tanstack/react-router'
-import { useEffect, memo, useState, lazy, Suspense } from 'react'
+import { useEffect, useRef, memo, useState, lazy, Suspense } from 'react'
 import { useGraphStore } from '@/stores/graph-store'
 import { Toolbar } from './toolbar'
 import { cn } from '@/lib/utils'
@@ -20,6 +20,9 @@ import { type GraphNode, type GraphEdge } from '@/types'
 import { MergeDialog } from './graph/actions/merge-nodes'
 import { useGraphRefresh } from '@/hooks/use-graph-refresh'
 import { usePermissions } from '@/hooks/use-can'
+import { preserveGraphPositions, graphChanges } from '@/lib/graph-presentation'
+import { Button } from '@/components/ui/button'
+import { RunSummaries } from './run-summary'
 const RelationshipsTable = lazy(() => import('@/components/table/relationships-view'))
 
 // Separate component for the drag overlay
@@ -55,25 +58,44 @@ const GraphPanel = ({ graphData, isLoading }: GraphPanelProps) => {
     from: '/_auth/dashboard/investigations/$investigationId/$type/$id'
   })
   const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const loadedSketch = useRef<string | undefined>(undefined)
+  const changes = useGraphStore((s) => s.changes)
+  const collapsedTypes = useGraphStore((s) => s.filters.collapsedTypes)
+  const nodes = useGraphStore((s) => s.nodes)
 
   // Dedicated hook for graph refresh on transform completion
   useGraphRefresh(params.id)
 
   useEffect(() => {
     if (graphData?.nds && graphData?.rls) {
-      updateGraphData(graphData.nds, graphData.rls)
+      const state = useGraphStore.getState()
+      const sameSketch = loadedSketch.current === params.id
+      if (sameSketch && state.pendingRefresh) {
+        state.setChanges(graphChanges(graphData.nds, graphData.rls, state.nodes, state.edges))
+      } else if (!sameSketch) {
+        state.setChanges(null)
+        state.reset()
+      }
+      updateGraphData(
+        sameSketch
+          ? preserveGraphPositions(graphData.nds, state.nodes, graphData.rls)
+          : graphData.nds,
+        graphData.rls
+      )
+      loadedSketch.current = params.id
       const types = new Set(graphData.nds.map((n) => n.nodeType))
       // Read current filters via getState() rather than subscribing — this
       // effect shouldn't re-run just because filters changed.
+      const previousFilters = sameSketch ? state.filters : { types: [], rules: [] }
       setFilters({
-        ...useGraphStore.getState().filters,
+        ...previousFilters,
         types: Array.from(types).map((t) => ({
           type: t,
-          checked: true
+          checked: previousFilters.types.find((filter) => filter.type === t)?.checked ?? true
         }))
       })
     }
-  }, [graphData?.nds, graphData?.rls, setFilters, updateGraphData])
+  }, [params.id, graphData?.nds, graphData?.rls, setFilters, updateGraphData])
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -130,6 +152,48 @@ const GraphPanel = ({ graphData, isLoading }: GraphPanelProps) => {
       className="h-full w-full flex flex-col relative outline-2 outline-transparent bg-background"
     >
       <Toolbar isLoading={isLoading} />
+      <RunSummaries sketchId={params.id} />
+      {!!collapsedTypes?.length && (
+        <div className="flex flex-wrap gap-2 px-3 py-1 border-b">
+          {collapsedTypes.map((type) => (
+            <Button
+              key={type}
+              size="sm"
+              variant="outline"
+              className="h-6 text-xs"
+              aria-expanded={false}
+              onClick={() =>
+                setFilters({
+                  ...useGraphStore.getState().filters,
+                  collapsedTypes: collapsedTypes.filter((item) => item !== type)
+                })
+              }
+            >
+              Expand {nodes.filter((node) => node.nodeType === type).length} {type} entities
+            </Button>
+          ))}
+        </div>
+      )}
+      {changes && (
+        <div
+          role="status"
+          className="flex items-center gap-2 px-3 py-1 border-b text-xs bg-primary/5"
+        >
+          <span>
+            Run changes: {changes.addedNodes.length} new entities, {changes.updatedNodes.length}{' '}
+            updated entities, {changes.addedEdges.length} new relationships,{' '}
+            {changes.updatedEdges.length} updated relationships.
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto h-6"
+            onClick={() => useGraphStore.getState().setChanges(null)}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
       <Suspense
         fallback={
           <div className="h-full w-full flex items-center justify-center">

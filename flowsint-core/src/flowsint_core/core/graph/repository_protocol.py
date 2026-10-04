@@ -26,7 +26,11 @@ class GraphRepositoryProtocol(Protocol):
         ...
 
     def update_node(
-        self, element_id: str, updates: GraphDict, sketch_id: str
+        self,
+        element_id: str,
+        updates: GraphDict,
+        sketch_id: str,
+        expected_version: Optional[int] = None,
     ) -> Optional[str]:
         """Update a node by its element ID. Returns element ID."""
         ...
@@ -113,6 +117,10 @@ class GraphRepositoryProtocol(Protocol):
 
     def add_to_batch(self, operation_type: str, **kwargs: Any) -> None:
         """Add an operation to the batch queue."""
+        ...
+
+    def clear_batch(self) -> None:
+        """Discard pending operations after an unsuccessful run."""
         ...
 
     def flush_batch(self) -> None:
