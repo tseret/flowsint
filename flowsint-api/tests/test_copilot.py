@@ -1,7 +1,7 @@
 """Agent runs and recorded-evidence routes are scoped and validated before work."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
@@ -169,6 +169,37 @@ def test_agent_run_of_another_sketch_is_hidden(client, db_session, backend):
     ):
         assert response.status_code in {403, 404}
     assert db_session.get(AgentRun, UUID(run_id)).status == "running"
+
+
+@pytest.mark.parametrize(
+    "status,started_ago,expected",
+    [
+        ("running", 3601, "failed"),
+        ("publishing", 3601, "failed"),
+        ("running", 3500, "running"),
+        ("running", None, "running"),
+    ],
+)
+def test_agent_run_lost_past_worker_time_limit_reads_as_failed(
+    client, db_session, backend, status, started_ago, expected
+):
+    headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
+    run_id = client.post(
+        "/api/copilot/agent", headers=headers, json=_agent(sketch_id)
+    ).json()["id"]
+    run = db_session.get(AgentRun, UUID(run_id))
+    run.status = status
+    run.created_at = datetime(2020, 1, 1)
+    if started_ago is not None:
+        run.started_at = datetime.now(timezone.utc) - timedelta(seconds=started_ago)
+    db_session.commit()
+
+    latest = client.get(f"/api/copilot/agent?sketch_id={sketch_id}", headers=headers)
+    by_id = client.get(f"/api/copilot/agent/{run_id}", headers=headers)
+    for body in (latest.json(), by_id.json()):
+        assert body["status"] == expected
+        assert bool(body["error"]) == (expected == "failed")
+        assert bool(body["finished_at"]) == (expected == "failed")
 
 
 def test_candidate_review_is_read_only_and_sketch_scoped(client, db_session, backend):

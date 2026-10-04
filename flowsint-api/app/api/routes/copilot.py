@@ -1,7 +1,7 @@
 """Autonomous passive investigation agent and recorded-evidence review routes."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from typing import Any, cast
 from uuid import UUID
@@ -457,12 +457,36 @@ def _run_view(run: AgentRun) -> dict[str, Any]:
     }
 
 
+def _fail_if_lost(db: Session, run: AgentRun) -> AgentRun:
+    """Celery kills a task at its hard time limit, and acks_late is off, so a run
+    still active that long after it started lost its worker and never resumes.
+    Queued runs (no started_at) are left alone: they start when a worker returns."""
+    now = datetime.now(timezone.utc)
+    db.execute(
+        update(AgentRun)
+        .where(
+            AgentRun.id == run.id,
+            AgentRun.status.in_(("running", "publishing")),
+            AgentRun.started_at < now - timedelta(seconds=celery.conf.task_time_limit),
+        )
+        .values(
+            status="failed",
+            error="The agent worker stopped before finishing. Start a new run.",
+            finished_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
+    db.refresh(run)
+    return run
+
+
 def _agent_run(db: Session, user: Profile, run_id: UUID) -> AgentRun:
     run = db.get(AgentRun, run_id)
     if run is None:
         raise HTTPException(404, "Agent run not found")
     _check_sketch(db, user, run.sketch_id, write=False)
-    return run
+    return _fail_if_lost(db, run)
 
 
 @router.post("/agent", status_code=201)
@@ -522,7 +546,7 @@ def latest_agent_run(
         .order_by(AgentRun.created_at.desc())
         .limit(1)
     ).first()
-    return _run_view(run) if run else None
+    return _run_view(_fail_if_lost(db, run)) if run else None
 
 
 @router.get("/agent/{run_id}")
