@@ -183,6 +183,7 @@ def test_agent_runs_passive_steps_then_publishes_cited_draft_findings(env):
     run = _execute(env)
 
     assert run.status == "completed", run.error
+    assert run.started_at is not None
     assert env.dispatched == [("run_enricher", "domain_to_whois")]
     assert [
         (s["step"], s["enricher"], s["outcome"], s["output_count"]) for s in run.steps
