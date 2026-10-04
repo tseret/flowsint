@@ -206,10 +206,25 @@ def test_agent_run_lost_past_agent_deadline_reads_as_failed(
         assert bool(body["finished_at"]) == (expected == "failed")
 
 
-def _finished_run(db_session, sketch_id, scan_ids):
-    from flowsint_core.core.models import CaseItem, Sketch
+def _finished_run(
+    db_session, sketch_id, scan_id, scan_status="COMPLETED", scan_age=0, finished_ago=0
+):
+    """A finished run with one step scan (`scan_status=None`: still queued, no
+    Scan row yet) and two draft findings."""
+    from flowsint_core.core.enums import EventLevel
+    from flowsint_core.core.models import CaseItem, Scan, Sketch
 
     sketch = db_session.get(Sketch, UUID(sketch_id))
+    now = datetime.now(timezone.utc)
+    if scan_status:
+        db_session.add(
+            Scan(
+                id=UUID(scan_id),
+                status=EventLevel[scan_status],
+                sketch_id=sketch.id,
+                started_at=(now - timedelta(seconds=scan_age)).replace(tzinfo=None),
+            )
+        )
     findings = [
         CaseItem(
             investigation_id=sketch.investigation_id,
@@ -226,8 +241,9 @@ def _finished_run(db_session, sketch_id, scan_ids):
         objective="Map this domain",
         seed_ids=["domain-1"],
         status="completed",
-        steps=[{"step": 1, "scan_id": scan_id} for scan_id in scan_ids],
+        steps=[{"step": 1, "scan_id": scan_id}],
         finding_ids=[str(finding.id) for finding in findings],
+        finished_at=now - timedelta(seconds=finished_ago),
     )
     db_session.add(run)
     db_session.commit()
@@ -241,7 +257,7 @@ def test_undo_removes_run_output_but_keeps_reviewed_findings(
 
     headers, sketch_id = _seed_user(db_session, (Role.OWNER,))
     scan_id = str(uuid4())
-    run_id, (draft, reviewed) = _finished_run(db_session, sketch_id, [scan_id])
+    run_id, (draft, reviewed) = _finished_run(db_session, sketch_id, scan_id)
     reviewed.assessment = "Confirmed by analyst"
     db_session.commit()  # bumps version: human work
     graph = backend[0]
@@ -266,37 +282,39 @@ def test_undo_removes_run_output_but_keeps_reviewed_findings(
     assert activity.action == "deleted"
 
 
+DEAD = 2 * 3600  # older than Celery's hard time limit
+
+
 @pytest.mark.parametrize(
-    "roles,status,scan_age,code",
+    "roles,status,scan_status,scan_age,finished_ago,code",
     [
-        ((Role.VIEWER,), "completed", None, 403),
-        ((Role.OWNER,), "running", None, 409),
-        ((Role.OWNER,), "publishing", None, 409),
-        ((Role.OWNER,), "cancelled", 60, 409),  # its last scan is still writing
-        ((Role.OWNER,), "cancelled", 2 * 3600, 200),  # that scan's worker died
+        ((Role.VIEWER,), "completed", "COMPLETED", 0, 0, 403),
+        ((Role.OWNER,), "running", "COMPLETED", 0, 0, 409),
+        ((Role.OWNER,), "publishing", "COMPLETED", 0, 0, 409),
+        ((Role.OWNER,), "cancelled", "PENDING", 60, 0, 409),  # still writing
+        ((Role.OWNER,), "cancelled", "PENDING", DEAD, 0, 200),  # its worker died
+        ((Role.OWNER,), "cancelled", None, 0, 0, 409),  # still queued
+        ((Role.OWNER,), "cancelled", None, 0, DEAD, 200),  # never picked up
     ],
 )
 def test_undo_waits_for_run_and_scans_to_stop(
-    client, db_session, backend, roles, status, scan_age, code
+    client,
+    db_session,
+    backend,
+    roles,
+    status,
+    scan_status,
+    scan_age,
+    finished_ago,
+    code,
 ):
-    from flowsint_core.core.enums import EventLevel
-    from flowsint_core.core.models import CaseItem, Scan
+    from flowsint_core.core.models import CaseItem
 
     headers, sketch_id = _seed_user(db_session, roles)
-    scan_id = uuid4()
-    run_id, findings = _finished_run(db_session, sketch_id, [str(scan_id)])
-    run = db_session.get(AgentRun, UUID(run_id))
-    run.status = status
-    if scan_age is not None:
-        db_session.add(
-            Scan(
-                id=scan_id,
-                status=EventLevel.PENDING,
-                sketch_id=UUID(sketch_id),
-                started_at=datetime.now(timezone.utc).replace(tzinfo=None)
-                - timedelta(seconds=scan_age),
-            )
-        )
+    run_id, findings = _finished_run(
+        db_session, sketch_id, str(uuid4()), scan_status, scan_age, finished_ago
+    )
+    db_session.get(AgentRun, UUID(run_id)).status = status
     db_session.commit()
     backend[0].query.return_value = [{"nodes": 0, "relationships": 0}]
     response = client.post(f"/api/copilot/agent/{run_id}/undo", headers=headers)

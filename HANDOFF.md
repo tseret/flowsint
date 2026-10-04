@@ -335,11 +335,13 @@ Done:
   - the edges of those nodes;
   - edges whose first observation names one of those scans.
   It also deletes run findings still at version 1 (never edited or reviewed), logging a `deleted` case activity, and sets the run status to `undone`. It is idempotent.
-- It returns 409 while the run is running or publishing, or while any step scan is still pending and younger than Celery's hard time limit.
-- The copilot sheet has an "Undo run" button (with a confirm dialog) on completed, failed and cancelled runs. After an undo it refreshes the graph and the case workspace.
-- Applied api/celery/celery-agents/app images v1.2.13-117-gd9cea7cb.
+- It returns 409 while the run is running or publishing. It also returns 409 while any step scan is unsettled (no Scan row yet, i.e. still queued, or pending and younger than Celery's hard time limit), unless the run finished more than that limit ago.
+- The copilot sheet has an "Undo run" button (with a confirm dialog) on completed, failed, cancelled and undone runs. After an undo it refreshes the graph and the case workspace.
+- Applied api/celery/celery-agents/app images v1.2.13-117-gd9cea7cb, then the review-fix images listed below.
   - Live Cypher smoke on a throwaway sketch removed the scan's node and its edge, plus the scan's edge between pre-existing nodes. It kept another scan's node and edge. A second call removed 0. Cleanup left 0 nodes.
   - In the UI, the button and confirm dialog appear on run 6a071010. The dialog was cancelled.
 
 Next:
-- Runs from before the provenance fix (6a071010, 1a9c2dc1) reach 0 nodes, because their nodes have no `created_by_scan`. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+- Runs from before the provenance fix (6a071010, 1a9c2dc1) reach 0 nodes, because their nodes have no `created_by_scan`.
+- If a run's scan revives an edge an analyst soft-deleted, the revived edge survives undo unless one of its endpoints is removed: that scan's observation is not at index 0.
+- Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.

@@ -25,7 +25,7 @@ import { ToolbarButton } from './toolbar'
 import { CopilotCandidates } from './copilot-candidates'
 
 const ACTIVE = ['running', 'publishing']
-const UNDOABLE = ['completed', 'failed', 'cancelled']
+const UNDOABLE = ['completed', 'failed', 'cancelled', 'undone']
 
 export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const { canEdit } = usePermissions()
