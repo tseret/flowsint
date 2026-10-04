@@ -294,3 +294,11 @@ Done:
 Next:
 - Any deploy must also start the `celery-agents` service; without it, agent runs stay queued.
 - Select 1–10 entities in a sketch, click Investigate selected entities, enter an objective and run. Review the draft findings in the case workspace. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-04 — fail agent runs whose worker died
+Done:
+- The worker stamps `agent_runs.started_at` (migration `20261004_agent_run_started`). Reading a run (latest, by id, cancel) marks it `failed` with "The agent worker stopped before finishing. Start a new run." once it has stayed `running`/`publishing` for `AGENT_DEADLINE_S` + 10 min after it started, so the UI stops polling. Queued runs (no `started_at`) are left alone. The cutoff is keyed to the task's own deadline because thread-pool workers do not enforce celery's `task_time_limit`.
+- Applied api/celery/celery-agents image v1.2.12-130-g5349295a; the migration ran. On Postgres, throwaway rows started 2 h ago (lost → failed), 1 h ago (live → running) and never (queued → running). The rows were deleted afterwards.
+
+Next:
+- Rows already stuck before this migration have no `started_at` and are not reaped; none exist locally. Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
