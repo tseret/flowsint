@@ -1,60 +1,58 @@
-import type { GraphNode } from '@/types'
+import type { GraphEdge, GraphNode } from '@/types'
 import { WAVE_RING_COLORS, WAVE_SEED_COLOR } from './constants'
 
-export type ScanRun = { id: string; started_at?: string | null; enricher?: string | null }
-
 export type DiscoveryWaves = {
-  // nodeId -> wave (0 = seed: manual, imported or created before provenance existed)
+  // nodeId -> wave: pivot steps from a seed, capped at the last ring color ("N+")
   waveOf: Map<string, number>
-  // waves[i] describes wave i + 1; nodes = how many current nodes that run created
-  waves: { scanId: string; enricher?: string; nodes: number }[]
+  // waves[w] = nodes in wave w and the enrichers that created them (when recorded)
+  waves: { nodes: number; enrichers: string[] }[]
 }
 
-// Scan timestamps are naive UTC; without a zone suffix Date.parse would read them as local time.
-const toMs = (iso?: string | null) =>
-  (iso && Date.parse(/z|[+-]\d\d:?\d\d$/i.test(iso) ? iso : `${iso}Z`)) || Infinity
+export const MAX_WAVE = WAVE_RING_COLORS.length
 
-// Wave N = the Nth enricher run (scan) of this sketch, ordered by start time. Runs that found
-// nothing new keep their number; a run whose scan row is gone is placed by its earliest node.
-export function computeDiscoveryWaves(nodes: GraphNode[], scans: ScanRun[] = []): DiscoveryWaves {
-  const known = new Set(scans.map((s) => s.id))
-  const runs = new Map<string, { enricher?: string; at: number }>(
-    scans.map((s) => [s.id, { at: toMs(s.started_at), enricher: s.enricher ?? undefined }])
-  )
-  for (const node of nodes) {
-    const { origin, created_by_scan, created_by_enricher, created_at } = node.nodeMetadata
-    if (origin !== 'enricher' || !created_by_scan) continue
-    const t = toMs(created_at)
-    const run = runs.get(created_by_scan)
-    if (!run) runs.set(created_by_scan, { enricher: created_by_enricher ?? 'unknown', at: t })
-    else {
-      run.enricher ??= created_by_enricher ?? 'unknown'
-      if (!known.has(created_by_scan) && t < run.at) run.at = t
-    }
+// Wave = shortest pivot path from a seed along edge direction (enrichers link input -> output).
+// Seeds are nodes nothing points to; a cycle no seed reaches is entered at its first node.
+export function computeDiscoveryWaves(nodes: GraphNode[], edges: GraphEdge[]): DiscoveryWaves {
+  const out = new Map<string, string[]>()
+  const pointedTo = new Set<string>()
+  for (const { source, target } of edges) {
+    if (source === target) continue
+    const targets = out.get(source)
+    if (targets) targets.push(target)
+    else out.set(source, [target])
+    pointedTo.add(target)
   }
 
-  const ordered = [...runs.entries()].sort(
-    ([a, ra], [b, rb]) => ra.at - rb.at || a.localeCompare(b)
-  )
-  const waveOfScan = new Map(ordered.map(([scanId], i) => [scanId, i + 1]))
+  const hop = new Map<string, number>()
+  const bfs = (starts: string[]) => {
+    for (const id of starts) hop.set(id, 0)
+    for (let i = 0; i < starts.length; i++) {
+      const next = hop.get(starts[i])! + 1
+      for (const target of out.get(starts[i]) ?? []) {
+        if (hop.has(target)) continue
+        hop.set(target, next)
+        starts.push(target)
+      }
+    }
+  }
+  bfs(nodes.filter((n) => !pointedTo.has(n.id)).map((n) => n.id))
+  for (const n of nodes) if (!hop.has(n.id)) bfs([n.id])
 
   const waveOf = new Map<string, number>()
-  const nodesInWave = new Map<number, number>()
-  for (const node of nodes) {
-    const { origin, created_by_scan } = node.nodeMetadata
-    const wave = (origin === 'enricher' && created_by_scan && waveOfScan.get(created_by_scan)) || 0
-    waveOf.set(node.id, wave)
-    nodesInWave.set(wave, (nodesInWave.get(wave) ?? 0) + 1)
+  const waves: { nodes: number; enrichers: Set<string> }[] = []
+  for (const n of nodes) {
+    const wave = Math.min(hop.get(n.id)!, MAX_WAVE)
+    waveOf.set(n.id, wave)
+    for (let w = waves.length; w <= wave; w++) waves.push({ nodes: 0, enrichers: new Set() })
+    waves[wave].nodes++
+    const enricher = n.nodeMetadata.created_by_enricher
+    if (wave && enricher) waves[wave].enrichers.add(enricher)
   }
   return {
     waveOf,
-    waves: ordered.map(([scanId, run], i) => ({
-      scanId,
-      enricher: run.enricher,
-      nodes: nodesInWave.get(i + 1) ?? 0
-    }))
+    waves: waves.map(({ nodes, enrichers }) => ({ nodes, enrichers: [...enrichers].sort() }))
   }
 }
 
 export const waveColor = (wave: number) =>
-  wave === 0 ? WAVE_SEED_COLOR : WAVE_RING_COLORS[(wave - 1) % WAVE_RING_COLORS.length]
+  wave === 0 ? WAVE_SEED_COLOR : WAVE_RING_COLORS[Math.min(wave, MAX_WAVE) - 1]

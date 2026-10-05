@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { computeDiscoveryWaves } from './discovery-waves'
-import { GraphNode, NodeMetadata } from '@/types'
+import { computeDiscoveryWaves, MAX_WAVE } from './discovery-waves'
+import { GraphEdge, GraphNode, NodeMetadata } from '@/types'
 
 const makeNode = (id: string, nodeMetadata: NodeMetadata = {}): GraphNode => ({
   id,
@@ -18,46 +18,43 @@ const makeNode = (id: string, nodeMetadata: NodeMetadata = {}): GraphNode => ({
   y: 0
 })
 
-const found = (id: string, scan: string, created_at: string) =>
-  makeNode(id, {
-    origin: 'enricher',
-    created_by_scan: scan,
-    created_by_enricher: `e-${scan}`,
-    created_at
-  })
-
-const nodes = [
-  makeNode('seed', { origin: 'manual', created_at: '2026-01-01T00:00:00Z' }),
-  makeNode('legacy'),
-  found('b1', 'b', '2026-01-01T00:01:00Z'),
-  // "a" started first but wrote its first node later (concurrent runs).
-  found('a1', 'a', '2026-01-01T00:05:00Z'),
-  found('b2', 'b', '2026-01-01T00:03:00Z')
-]
+const edge = (source: string, target: string): GraphEdge => ({
+  id: `${source}-${target}`,
+  source,
+  target,
+  label: 'TO'
+})
 
 describe('computeDiscoveryWaves', () => {
-  it('numbers runs by start time, keeping runs that created nothing', () => {
-    // Naive (zone-less) UTC timestamps, as the scans API returns them.
-    const scans = [
-      { id: 'empty', started_at: '2026-01-01T00:00:10', enricher: 'ip_to_asn' },
-      { id: 'a', started_at: '2026-01-01T00:00:20', enricher: null },
-      { id: 'b', started_at: '2026-01-01T00:00:30', enricher: 'flow' }
+  it('numbers nodes by shortest pivot path from the seeds', () => {
+    const nodes = ['d1', 'd2', 'ip', 'port', 'rev'].map((id) => makeNode(id))
+    nodes[2] = makeNode('ip', { created_by_enricher: 'domain_to_ip' })
+    // d2 -> ip is a shortcut, so ip stays at wave 1; rev -> ip back-edge changes nothing.
+    const edges = [
+      edge('d1', 'ip'),
+      edge('d2', 'ip'),
+      edge('ip', 'port'),
+      edge('ip', 'rev'),
+      edge('rev', 'ip')
     ]
-    const { waveOf, waves } = computeDiscoveryWaves(nodes, scans)
-    expect(Object.fromEntries(waveOf)).toEqual({ seed: 0, legacy: 0, a1: 2, b1: 3, b2: 3 })
-    // The scan's own name wins (a flow's nodes carry their sub-enricher); legacy unnamed scans
-    // fall back to node provenance.
+    const { waveOf, waves } = computeDiscoveryWaves(nodes, edges)
+    expect(Object.fromEntries(waveOf)).toEqual({ d1: 0, d2: 0, ip: 1, port: 2, rev: 2 })
     expect(waves).toEqual([
-      { scanId: 'empty', enricher: 'ip_to_asn', nodes: 0 },
-      { scanId: 'a', enricher: 'e-a', nodes: 1 },
-      { scanId: 'b', enricher: 'flow', nodes: 2 }
+      { nodes: 2, enrichers: [] },
+      { nodes: 1, enrichers: ['domain_to_ip'] },
+      { nodes: 2, enrichers: [] }
     ])
   })
 
-  it('places runs missing from the scan list by their earliest node', () => {
-    const { waveOf } = computeDiscoveryWaves(nodes, [
-      { id: 'a', started_at: '2026-01-01T00:02:00Z' }
-    ])
-    expect(Object.fromEntries(waveOf)).toMatchObject({ b1: 1, b2: 1, a1: 2 })
+  it('enters a seedless cycle at its first node and caps deep chains', () => {
+    const ids = Array.from({ length: MAX_WAVE + 3 }, (_, i) => `n${i}`)
+    const nodes = [...ids, 'a', 'b'].map((id) => makeNode(id))
+    const edges = [...ids.slice(1).map((id, i) => edge(ids[i], id)), edge('a', 'b'), edge('b', 'a')]
+    const { waveOf, waves } = computeDiscoveryWaves(nodes, edges)
+    expect(waveOf.get('a')).toBe(0)
+    expect(waveOf.get('b')).toBe(1)
+    expect(waveOf.get(ids.at(-1)!)).toBe(MAX_WAVE)
+    expect(waves).toHaveLength(MAX_WAVE + 1)
+    expect(waves[MAX_WAVE].nodes).toBe(3)
   })
 })

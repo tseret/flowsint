@@ -136,8 +136,6 @@ class Scan(Base):
     )
     # Same legacy Column() style as Log.type above.
     status: Any = Column(SQLEnum(EventLevel), default=EventLevel.PENDING)
-    # Enricher/template name, or "flow"; the run's label in the discovery-wave legend.
-    enricher = Column(String, nullable=True)
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
