@@ -41,6 +41,7 @@ def run_enricher(
             id=scan_id,
             status=EventLevel.PENDING,
             sketch_id=uuid.UUID(sketch_id) if sketch_id else None,
+            enricher=enricher_name,
         )
         session.add(scan)
         session.commit()
@@ -120,6 +121,7 @@ def run_template_enricher(
             id=scan_id,
             status=EventLevel.PENDING,
             sketch_id=uuid.UUID(sketch_id) if sketch_id else None,
+            enricher=template_name,
         )
         session.add(scan)
         session.commit()

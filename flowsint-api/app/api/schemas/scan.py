@@ -18,3 +18,4 @@ class ScanRead(ORMBase):
     sketch_id: Optional[UUID4]
     status: Optional[str]
     started_at: Optional[datetime] = None
+    enricher: Optional[str] = None

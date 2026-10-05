@@ -38,6 +38,7 @@ def run_flow(
             id=scan_id,
             status=EventLevel.PENDING,
             sketch_id=uuid.UUID(sketch_id) if sketch_id else None,
+            enricher="flow",
         )
         session.add(scan)
         session.commit()

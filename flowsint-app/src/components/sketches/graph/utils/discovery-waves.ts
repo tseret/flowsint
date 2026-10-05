@@ -1,13 +1,13 @@
 import type { GraphNode } from '@/types'
 import { WAVE_RING_COLORS, WAVE_SEED_COLOR } from './constants'
 
-export type ScanRun = { id: string; started_at?: string | null }
+export type ScanRun = { id: string; started_at?: string | null; enricher?: string | null }
 
 export type DiscoveryWaves = {
   // nodeId -> wave (0 = seed: manual, imported or created before provenance existed)
   waveOf: Map<string, number>
-  // waves[i] describes wave i + 1; enricher is undefined for a run that created no node
-  waves: { scanId: string; enricher?: string }[]
+  // waves[i] describes wave i + 1; nodes = how many current nodes that run created
+  waves: { scanId: string; enricher?: string; nodes: number }[]
 }
 
 // Scan timestamps are naive UTC; without a zone suffix Date.parse would read them as local time.
@@ -19,7 +19,7 @@ const toMs = (iso?: string | null) =>
 export function computeDiscoveryWaves(nodes: GraphNode[], scans: ScanRun[] = []): DiscoveryWaves {
   const known = new Set(scans.map((s) => s.id))
   const runs = new Map<string, { enricher?: string; at: number }>(
-    scans.map((s) => [s.id, { at: toMs(s.started_at) }])
+    scans.map((s) => [s.id, { at: toMs(s.started_at), enricher: s.enricher ?? undefined }])
   )
   for (const node of nodes) {
     const { origin, created_by_scan, created_by_enricher, created_at } = node.nodeMetadata
@@ -39,16 +39,20 @@ export function computeDiscoveryWaves(nodes: GraphNode[], scans: ScanRun[] = [])
   const waveOfScan = new Map(ordered.map(([scanId], i) => [scanId, i + 1]))
 
   const waveOf = new Map<string, number>()
+  const nodesInWave = new Map<number, number>()
   for (const node of nodes) {
     const { origin, created_by_scan } = node.nodeMetadata
-    waveOf.set(
-      node.id,
-      (origin === 'enricher' && created_by_scan && waveOfScan.get(created_by_scan)) || 0
-    )
+    const wave = (origin === 'enricher' && created_by_scan && waveOfScan.get(created_by_scan)) || 0
+    waveOf.set(node.id, wave)
+    nodesInWave.set(wave, (nodesInWave.get(wave) ?? 0) + 1)
   }
   return {
     waveOf,
-    waves: ordered.map(([scanId, run]) => ({ scanId, enricher: run.enricher }))
+    waves: ordered.map(([scanId, run], i) => ({
+      scanId,
+      enricher: run.enricher,
+      nodes: nodesInWave.get(i + 1) ?? 0
+    }))
   }
 }
 
