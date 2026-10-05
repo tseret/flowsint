@@ -21,4 +21,6 @@ export type Filters = {
   observedAfter?: string
   observedBefore?: string
   collapsedTypes?: string[]
+  // Pivot depths (discovery waves) to hide; the last one also hides every deeper node
+  hiddenWaves: number[]
 }

@@ -86,7 +86,7 @@ const GraphPanel = ({ graphData, isLoading }: GraphPanelProps) => {
       const types = new Set(graphData.nds.map((n) => n.nodeType))
       // Read current filters via getState() rather than subscribing — this
       // effect shouldn't re-run just because filters changed.
-      const previousFilters = sameSketch ? state.filters : { types: [], rules: [] }
+      const previousFilters = sameSketch ? state.filters : { types: [], rules: [], hiddenWaves: [] }
       setFilters({
         ...previousFilters,
         types: Array.from(types).map((t) => ({
