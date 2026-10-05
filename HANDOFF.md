@@ -366,3 +366,18 @@ Next:
 - Runs from before the provenance fix (6a071010, 1a9c2dc1) reach 0 nodes, because their nodes have no `created_by_scan`.
 - If a run's scan revives an edge an analyst soft-deleted, the revived edge survives undo unless one of its endpoints is removed: that scan's observation is not at index 0.
 - Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+## 2026-10-04 — discovery wave rings
+Done:
+- Branch `feat/discovery-wave-rings` (from origin/main, independent of the workspace branch).
+- Nodes record how they entered a sketch: `nodeMetadata.origin` is `manual` or `enricher`, plus `created_by_scan` and `created_by_enricher`. These are written on create only.
+- The new nullable `scans.enricher` column (migration `d2a7c4e9b1f0`) is set by run_enricher, run_template_enricher and flows ("flow").
+- The graph draws one colored ring per discovery wave: seeds/manual nodes are wave 0, and the Nth scan of the sketch by `started_at` is wave N. A legend lists each run's enricher, marks runs with no new nodes, and labels legacy runs "unknown". The setting `showDiscoveryWaves` controls both and defaults to on. The neighbors preview shows no rings, because it has no sketch scans.
+- This workspace has the local-only merge migration `06ec274dd75d`, merging the scans enricher change and the agent_run heads. The app, api, celery and celery-agents images were rebuilt; live smoke ran on sketch a0cba0cf.
+
+Next:
+- Known limits:
+  - imported/batch nodes count as seeds;
+  - `merge_nodes` and the node PUT bypass create-only provenance;
+  - a flow is one wave.
+- Team deployment still needs approval.
