@@ -46,7 +46,7 @@ describe('computeDiscoveryWaves', () => {
     ])
   })
 
-  it('enters a seedless cycle at its first node and caps deep chains', () => {
+  it('enters a seedless two-node cycle and caps deep chains', () => {
     const ids = Array.from({ length: MAX_WAVE + 3 }, (_, i) => `n${i}`)
     const nodes = [...ids, 'a', 'b'].map((id) => makeNode(id))
     const edges = [...ids.slice(1).map((id, i) => edge(ids[i], id)), edge('a', 'b'), edge('b', 'a')]
@@ -56,5 +56,14 @@ describe('computeDiscoveryWaves', () => {
     expect(waveOf.get(ids.at(-1)!)).toBe(MAX_WAVE)
     expect(waves).toHaveLength(MAX_WAVE + 1)
     expect(waves[MAX_WAVE].nodes).toBe(3)
+  })
+
+  it('starts a seedless component on its cycle, not on a node downstream of it', () => {
+    const nodes = ['c', 'a', 'b', 'x'].map((id) => makeNode(id))
+    const edges = [edge('a', 'b'), edge('b', 'a'), edge('b', 'c'), edge('ghost', 'x')]
+    const { waveOf } = computeDiscoveryWaves(nodes, edges)
+    expect(waveOf.get('c')).toBe(waveOf.get('b')! + 1)
+    expect([waveOf.get('a'), waveOf.get('b')].sort()).toEqual([0, 1])
+    expect(waveOf.get('x')).toBe(0)
   })
 })
