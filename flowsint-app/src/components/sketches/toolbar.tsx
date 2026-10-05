@@ -223,9 +223,9 @@ export const Toolbar = memo(function Toolbar({ isLoading }: { isLoading: boolean
   const areExactlyTwoSelected = selectedNodes.length === 2
   const areMergeable =
     selectedNodes.length > 1 && selectedNodes.every((n) => n.nodeType === selectedNodes[0].nodeType)
-  const hasFilters = !(
-    filters.types.every((t) => t.checked) || filters.types.every((t) => !t.checked)
-  )
+  const hasFilters =
+    !(filters.types.every((t) => t.checked) || filters.types.every((t) => !t.checked)) ||
+    filters.hiddenWaves.length > 0
 
   return (
     <>

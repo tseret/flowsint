@@ -16,4 +16,6 @@ export type RuleFilter = {
 export type Filters = {
   types: TypeFilter[]
   rules: RuleFilter[]
+  // Pivot depths (discovery waves) to hide; the last one also hides every deeper node
+  hiddenWaves: number[]
 }

@@ -117,6 +117,13 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes, allEdges) : null),
     [showDiscoveryWaves, allNodes, allEdges]
   )
+  // Turning the rings off removes the legend, the only control that can undo a depth filter.
+  const hasHiddenWaves = useGraphStore((s) => s.filters.hiddenWaves.length > 0)
+  const setFilters = useGraphStore((s) => s.setFilters)
+  useEffect(() => {
+    if (sketchId && !showDiscoveryWaves && hasHiddenWaves)
+      setFilters({ ...useGraphStore.getState().filters, hiddenWaves: [] })
+  }, [sketchId, showDiscoveryWaves, hasHiddenWaves, setFilters])
 
   const {
     currentNodeId,
