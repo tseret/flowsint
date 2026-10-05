@@ -20,8 +20,7 @@ from .types import GraphData, GraphDict, GraphNode
 class LoggerProtocol(Protocol):
     """Protocol for logger implementations."""
 
-    @staticmethod
-    def graph_append(sketch_id: str, message: Dict[str, Any]) -> None:
+    def graph_append(self, sketch_id: str, message: Dict[str, Any]) -> None:
         """Log a graph append message."""
         ...
 
@@ -116,6 +115,7 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+            return None
         else:
             return self._repository.create_node(
                 node_obj=neo4j_node_dict,
@@ -148,6 +148,7 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+            return None
         else:
             return self._repository.create_node(
                 node_obj=neo4j_node_dict,
@@ -212,7 +213,7 @@ class GraphService:
         from_element_id: str,
         to_element_id: str,
         rel_label: str = "IS_RELATED_TO",
-    ):
+    ) -> Optional[Dict[str, Any]]:
         return self._repository.create_relationship_by_element_id(
             from_element_id=from_element_id,
             to_element_id=to_element_id,
@@ -322,7 +323,7 @@ class GraphService:
         if self._enable_batching:
             self._repository.flush_batch()
 
-    def query(self, cypher: str, parameters: Dict[str, Any] = None) -> list:
+    def query(self, cypher: str, parameters: Optional[Dict[str, Any]] = None) -> list:
         """
         Execute a custom Cypher query.
 
@@ -333,7 +334,7 @@ class GraphService:
         Returns:
             List of result records
         """
-        return self._repository.query(cypher, parameters)
+        return self._repository.query(cypher, parameters or {})
 
     def set_batch_size(self, size: int) -> None:
         """
@@ -344,11 +345,11 @@ class GraphService:
         """
         self._repository.set_batch_size(size)
 
-    def __enter__(self):
+    def __enter__(self) -> "GraphService":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush()

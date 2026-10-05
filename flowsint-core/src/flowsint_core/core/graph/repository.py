@@ -763,7 +763,7 @@ class Neo4jGraphRepository:
             return None
 
         node_type = new_node_data.get("type", "Node")
-        properties = {}
+        properties: Dict[str, Any] = {}
         properties["sketch_id"] = sketch_id
 
         is_reusing_node = new_node_id and new_node_id in old_node_ids
@@ -790,7 +790,7 @@ class Neo4jGraphRepository:
         if not result:
             return None
 
-        new_node_element_id = result[0]["newElementId"]
+        new_node_element_id: str = result[0]["newElementId"]
 
         copy_relationships_query = """
         MATCH (new) WHERE elementId(new) = $newElementId
@@ -993,11 +993,11 @@ class Neo4jGraphRepository:
             record = result.single()
             return record["total"] if record else 0
 
-    def __enter__(self):
+    def __enter__(self) -> "Neo4jGraphRepository":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush_batch()
