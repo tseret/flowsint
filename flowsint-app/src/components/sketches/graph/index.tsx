@@ -112,12 +112,14 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   const setImportModalOpen = useGraphSettingsStore((s) => s.setImportModalOpen)
   // Waves come from the unfiltered sketch so filtering never renumbers them.
   const allNodes = useGraphStore((s) => s.nodes)
-  const showDiscoveryWaves = forceSettings.showDiscoveryWaves?.value ?? true
+  // Only the sketch graph (it has a sketchId) gets waves: without the run list the numbering
+  // would disagree with the main graph, e.g. in the neighbors preview.
+  const showDiscoveryWaves = (forceSettings.showDiscoveryWaves?.value ?? true) && !!sketchId
   // Same key as the status bar, which already polls it; the run list gives true run order.
   const { data: scans } = useQuery<ScanRun[]>({
     queryKey: [...queryKeys.scans.list, sketchId],
     queryFn: () => scanService.getSketchScans(sketchId as string),
-    enabled: showDiscoveryWaves && !!sketchId
+    enabled: showDiscoveryWaves
   })
   const discoveryWaves = useMemo(
     () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes, scans) : null),
