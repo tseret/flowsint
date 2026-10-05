@@ -57,6 +57,12 @@ const DEFAULT_SETTINGS = {
       value: false,
       description: 'Node style, filled by default.'
     },
+    showDiscoveryWaves: {
+      name: 'Pivot depth rings',
+      type: 'boolean',
+      value: true,
+      description: 'Ring color shows how many pivots away from a seed a node is (grey = seed).'
+    },
     dotStyle: {
       name: 'Node style (dot/card)',
       type: 'boolean',
@@ -425,7 +431,7 @@ type GraphGeneralSettingsStore = {
 }
 
 // Storage version - increment this whenever you make breaking changes to DEFAULT_SETTINGS
-const STORAGE_VERSION = 8
+const STORAGE_VERSION = 9
 
 export const useGraphSettingsStore = create<GraphGeneralSettingsStore>()(
   persist(

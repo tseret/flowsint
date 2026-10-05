@@ -11,6 +11,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from .connection import Neo4jConnection
 from .types import GraphDict
 
+# Flattened node props written only when MERGE creates the node.
+CREATE_ONLY_PROPS = (
+    "nodeMetadata.created_at",
+    "nodeMetadata.origin",
+    "nodeMetadata.created_by_scan",
+    "nodeMetadata.created_by_enricher",
+)
+
 
 class Neo4jGraphRepository:
     """
@@ -107,18 +115,26 @@ class Neo4jGraphRepository:
     ) -> Tuple[str, Dict[str, Any]]:
         node_label = node_obj.get("nodeLabel")
         node_type = node_obj.get("nodeType")
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        # Creation timestamp and provenance are first-write-wins: enrichers re-create
+        # their input node, which must not relabel a seed or reorder discovery waves.
+        props = {k: v for k, v in node_obj.items() if k not in CREATE_ONLY_PROPS}
+        create_only = {prop: node_obj.get(prop) for prop in CREATE_ONLY_PROPS}
+        create_only["nodeMetadata.created_at"] = created_at
 
         # paramètres Neo4j
         params = {
-            "props": node_obj,  # flat with keys containing "."
+            "props": props,  # flat with keys containing "."
+            "create_only": create_only,
             "node_label": node_label,
             "sketch_id": sketch_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
         }
 
         query = f"""
         MERGE (n:{node_type} {{ nodeLabel: $node_label, sketch_id: $sketch_id }})
-        ON CREATE SET n.created_at = $created_at
+        ON CREATE SET n.created_at = $created_at, n += $create_only
         SET n += $props
         SET n.deleted_at = null
         RETURN elementId(n) AS id
@@ -747,7 +763,7 @@ class Neo4jGraphRepository:
             return None
 
         node_type = new_node_data.get("type", "Node")
-        properties = {}
+        properties: Dict[str, Any] = {}
         properties["sketch_id"] = sketch_id
 
         is_reusing_node = new_node_id and new_node_id in old_node_ids
@@ -774,7 +790,7 @@ class Neo4jGraphRepository:
         if not result:
             return None
 
-        new_node_element_id = result[0]["newElementId"]
+        new_node_element_id: str = result[0]["newElementId"]
 
         copy_relationships_query = """
         MATCH (new) WHERE elementId(new) = $newElementId
@@ -977,11 +993,11 @@ class Neo4jGraphRepository:
             record = result.single()
             return record["total"] if record else 0
 
-    def __enter__(self):
+    def __enter__(self) -> "Neo4jGraphRepository":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush_batch()

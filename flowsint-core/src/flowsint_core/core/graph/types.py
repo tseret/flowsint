@@ -5,7 +5,7 @@ This module contains Pydantic models for graph nodes, edges, and related data st
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 # from flowsint_types import FlowsintType
 from pydantic import BaseModel, Field
@@ -15,6 +15,10 @@ GraphDict = Dict[str, Any]
 
 class NodeMetadata(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
+    # Provenance, set once when the node is first created (see repository._build_node_query).
+    origin: Optional[Literal["manual", "enricher"]] = None
+    created_by_scan: Optional[str] = None
+    created_by_enricher: Optional[str] = None
 
     class Config:
         extra = "allow"

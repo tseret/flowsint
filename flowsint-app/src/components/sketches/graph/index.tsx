@@ -34,6 +34,8 @@ import { GraphLoadingOverlay } from './components/graph-loading-overlay'
 import { GraphSelectorOverlay } from './components/graph-selector-overlay'
 import { LinkCreationCanvas } from './components/link-creation-overlay'
 import MinimapCanvas from './components/minimap'
+import { DiscoveryWaveLegend } from './components/discovery-wave-legend'
+import { computeDiscoveryWaves, waveColor } from './utils/discovery-waves'
 import { Background } from './background'
 import { BackgroundVariant } from './background/background-types'
 import { Maximize } from 'lucide-react'
@@ -105,6 +107,16 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   )
   const forceSettings = useGraphSettingsStore((s) => s.forceSettings)
   const setImportModalOpen = useGraphSettingsStore((s) => s.setImportModalOpen)
+  // Depth comes from the unfiltered sketch so filtering never renumbers it.
+  const allNodes = useGraphStore((s) => s.nodes)
+  const allEdges = useGraphStore((s) => s.edges)
+  // Only the sketch graph (it has a sketchId) gets depth rings: a subgraph such as the neighbors
+  // preview has other seeds, so its numbering would disagree with the main graph.
+  const showDiscoveryWaves = (forceSettings.showDiscoveryWaves?.value ?? true) && !!sketchId
+  const discoveryWaves = useMemo(
+    () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes, allEdges) : null),
+    [showDiscoveryWaves, allNodes, allEdges]
+  )
 
   const {
     currentNodeId,
@@ -457,7 +469,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
         highlightNodes,
         highlightLinks,
         hoverNode,
-        rc
+        rc,
+        waveColor: discoveryWaves ? waveColor(discoveryWaves.waveOf.get(node.id) ?? 0) : undefined
       })
     },
     [
@@ -470,7 +483,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
       highlightNodes,
       highlightLinks,
       hoverNode,
-      getOrCreateRC
+      getOrCreateRC,
+      discoveryWaves
     ]
   )
 
@@ -602,6 +616,9 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
           canvasWidth={containerSize.width}
           canvasHeight={containerSize.height}
         />
+      )}
+      {discoveryWaves && discoveryWaves.waves.length > 0 && (
+        <DiscoveryWaveLegend waves={discoveryWaves.waves} />
       )}
       {showMinimalControls && (
         <div className="absolute top-1 right-1">

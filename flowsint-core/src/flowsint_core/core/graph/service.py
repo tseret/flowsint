@@ -20,8 +20,7 @@ from .types import GraphData, GraphDict, GraphNode
 class LoggerProtocol(Protocol):
     """Protocol for logger implementations."""
 
-    @staticmethod
-    def graph_append(sketch_id: str, message: Dict[str, Any]) -> None:
+    def graph_append(self, sketch_id: str, message: Dict[str, Any]) -> None:
         """Log a graph append message."""
         ...
 
@@ -43,6 +42,8 @@ class GraphService:
         logger: Optional[LoggerProtocol] = None,
         enable_batching: bool = False,
         type_resolver: Optional[TypeResolver] = None,
+        *,
+        provenance: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the graph service.
@@ -53,6 +54,8 @@ class GraphService:
             logger: Optional logger instance
             enable_batching: Enable batch operations
             type_resolver: Optional callable to resolve custom types by name
+            provenance: Optional {"origin", "created_by_scan", "created_by_enricher"}
+                stamped as nodeMetadata.* on nodes this service creates (first creation only)
 
         Raises:
             ValueError: If repository is not provided
@@ -67,6 +70,14 @@ class GraphService:
         self._logger = logger
         self._enable_batching = enable_batching
         self._type_resolver = type_resolver
+        self._provenance = provenance
+
+    def _stamp_provenance(self, neo4j_node_dict: GraphDict) -> GraphDict:
+        # Overwrite all three keys so a client-supplied nodeMetadata can't forge them.
+        if self._provenance is not None:
+            for key in ("origin", "created_by_scan", "created_by_enricher"):
+                neo4j_node_dict[f"nodeMetadata.{key}"] = self._provenance.get(key)
+        return neo4j_node_dict
 
     @property
     def sketch_id(self) -> str:
@@ -94,7 +105,9 @@ class GraphService:
                 "create_node method takes a GraphNode as input. If you want to insert a node from a FlowsintType, please use create_node_from_flowsint_type method."
             )
 
-        neo4j_node_dict: GraphDict = GraphSerializer.graph_node_to_neo4j_dict(node_obj)
+        neo4j_node_dict: GraphDict = self._stamp_provenance(
+            GraphSerializer.graph_node_to_neo4j_dict(node_obj)
+        )
 
         if self._enable_batching:
             self._repository.add_to_batch(
@@ -102,6 +115,7 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+            return None
         else:
             return self._repository.create_node(
                 node_obj=neo4j_node_dict,
@@ -124,8 +138,8 @@ class GraphService:
                 "create_node_from_flowsint_type method takes a FlowsintType as input. If you want to insert a node from a GraphNode, please use create_node method."
             )
 
-        neo4j_node_dict: GraphDict = GraphSerializer.flowsint_type_to_neo4j_dict(
-            node_obj
+        neo4j_node_dict: GraphDict = self._stamp_provenance(
+            GraphSerializer.flowsint_type_to_neo4j_dict(node_obj)
         )
 
         if self._enable_batching:
@@ -134,6 +148,7 @@ class GraphService:
                 node_obj=neo4j_node_dict,
                 sketch_id=self._sketch_id,
             )
+            return None
         else:
             return self._repository.create_node(
                 node_obj=neo4j_node_dict,
@@ -198,7 +213,7 @@ class GraphService:
         from_element_id: str,
         to_element_id: str,
         rel_label: str = "IS_RELATED_TO",
-    ):
+    ) -> Optional[Dict[str, Any]]:
         return self._repository.create_relationship_by_element_id(
             from_element_id=from_element_id,
             to_element_id=to_element_id,
@@ -308,7 +323,7 @@ class GraphService:
         if self._enable_batching:
             self._repository.flush_batch()
 
-    def query(self, cypher: str, parameters: Dict[str, Any] = None) -> list:
+    def query(self, cypher: str, parameters: Optional[Dict[str, Any]] = None) -> list:
         """
         Execute a custom Cypher query.
 
@@ -319,7 +334,7 @@ class GraphService:
         Returns:
             List of result records
         """
-        return self._repository.query(cypher, parameters)
+        return self._repository.query(cypher, parameters or {})
 
     def set_batch_size(self, size: int) -> None:
         """
@@ -330,11 +345,11 @@ class GraphService:
         """
         self._repository.set_batch_size(size)
 
-    def __enter__(self):
+    def __enter__(self) -> "GraphService":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush()
@@ -344,6 +359,7 @@ def create_graph_service(
     sketch_id: str,
     enable_batching: bool = True,
     type_resolver: Optional[TypeResolver] = None,
+    provenance: Optional[Dict[str, str]] = None,
 ) -> GraphService:
     """
     Factory function to create a GraphService instance with Neo4j repository.
@@ -355,6 +371,7 @@ def create_graph_service(
         sketch_id: Investigation sketch ID
         enable_batching: Enable batch operations
         type_resolver: Optional callable to resolve custom types by name
+        provenance: Optional node provenance, see GraphService
 
     Returns:
         Configured GraphService instance
@@ -371,4 +388,5 @@ def create_graph_service(
         logger=Logger,
         enable_batching=enable_batching,
         type_resolver=type_resolver,
+        provenance=provenance,
     )

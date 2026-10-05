@@ -45,6 +45,9 @@ def test_serializer():
         "nodeProperties.domain": "domain.com",
         "nodeProperties.root": True,
         "nodeMetadata.created_at": created_at.isoformat(),
+        "nodeMetadata.origin": None,
+        "nodeMetadata.created_by_scan": None,
+        "nodeMetadata.created_by_enricher": None,
     }
 
     assert to_neo4j == expected
