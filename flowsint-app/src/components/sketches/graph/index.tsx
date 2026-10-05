@@ -523,13 +523,17 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
 
   if (!nodes.length) {
     return (
-      <div ref={containerRef} className={'h-full'} style={style}>
+      <div ref={containerRef} className={'relative h-full'} style={style}>
         <GraphEmptyState
           onOpenAddDialog={handleOpenNewAddItemDialog}
           onOpenImportDialog={handleOpenImportDialog}
           className={className}
           style={style}
         />
+        {/* Filters can hide every node; keep the legend so hidden depths can be shown again */}
+        {discoveryWaves && discoveryWaves.waves.length > 0 && (
+          <DiscoveryWaveLegend waves={discoveryWaves.waves} />
+        )}
       </div>
     )
   }
