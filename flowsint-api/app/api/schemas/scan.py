@@ -23,3 +23,4 @@ class ScanRead(ORMBase):
     error: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    enricher: Optional[str] = None

@@ -39,16 +39,18 @@ describe('computeDiscoveryWaves', () => {
   it('numbers runs by start time, keeping runs that created nothing', () => {
     // Naive (zone-less) UTC timestamps, as the scans API returns them.
     const scans = [
-      { id: 'empty', started_at: '2026-01-01T00:00:10' },
-      { id: 'a', started_at: '2026-01-01T00:00:20' },
-      { id: 'b', started_at: '2026-01-01T00:00:30' }
+      { id: 'empty', started_at: '2026-01-01T00:00:10', enricher: 'ip_to_asn' },
+      { id: 'a', started_at: '2026-01-01T00:00:20', enricher: null },
+      { id: 'b', started_at: '2026-01-01T00:00:30', enricher: 'flow' }
     ]
     const { waveOf, waves } = computeDiscoveryWaves(nodes, scans)
     expect(Object.fromEntries(waveOf)).toEqual({ seed: 0, legacy: 0, a1: 2, b1: 3, b2: 3 })
+    // The scan's own name wins (a flow's nodes carry their sub-enricher); legacy unnamed scans
+    // fall back to node provenance.
     expect(waves).toEqual([
-      { scanId: 'empty', enricher: undefined },
-      { scanId: 'a', enricher: 'e-a' },
-      { scanId: 'b', enricher: 'e-b' }
+      { scanId: 'empty', enricher: 'ip_to_asn', nodes: 0 },
+      { scanId: 'a', enricher: 'e-a', nodes: 1 },
+      { scanId: 'b', enricher: 'flow', nodes: 2 }
     ])
   })
 
