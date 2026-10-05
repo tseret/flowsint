@@ -11,16 +11,17 @@ export type DiscoveryWaves = {
 export const MAX_WAVE = WAVE_RING_COLORS.length
 
 // Wave = shortest pivot path from a seed along edge direction (enrichers link input -> output).
-// Seeds are nodes nothing points to; a cycle no seed reaches is entered at its first node.
+// Seeds are nodes nothing points to; a cycle no seed reaches is entered at one of its nodes.
 export function computeDiscoveryWaves(nodes: GraphNode[], edges: GraphEdge[]): DiscoveryWaves {
+  const ids = new Set(nodes.map((n) => n.id))
   const out = new Map<string, string[]>()
-  const pointedTo = new Set<string>()
+  const parentOf = new Map<string, string>()
   for (const { source, target } of edges) {
-    if (source === target) continue
+    if (source === target || !ids.has(source) || !ids.has(target)) continue
     const targets = out.get(source)
     if (targets) targets.push(target)
     else out.set(source, [target])
-    pointedTo.add(target)
+    parentOf.set(target, source)
   }
 
   const hop = new Map<string, number>()
@@ -35,8 +36,19 @@ export function computeDiscoveryWaves(nodes: GraphNode[], edges: GraphEdge[]): D
       }
     }
   }
-  bfs(nodes.filter((n) => !pointedTo.has(n.id)).map((n) => n.id))
-  for (const n of nodes) if (!hop.has(n.id)) bfs([n.id])
+  bfs(nodes.filter((n) => !parentOf.has(n.id)).map((n) => n.id))
+  for (const n of nodes) {
+    if (hop.has(n.id)) continue
+    // Every parent of an unreached node is unreached too, so walking parents must loop:
+    // start on that cycle, not on a node downstream of it.
+    const seen = new Set<string>()
+    let id = n.id
+    while (!seen.has(id)) {
+      seen.add(id)
+      id = parentOf.get(id)!
+    }
+    bfs([id])
+  }
 
   const waveOf = new Map<string, number>()
   const waves: { nodes: number; enrichers: Set<string> }[] = []

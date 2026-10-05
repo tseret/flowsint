@@ -170,13 +170,13 @@ export const useGraphStore = create<GraphState>()(
       },
 
       addNode: (newNode) => {
-        const { nodes, nodesMapping, edges, filters } = get()
+        const { nodesMapping, edges, filters } = get()
         const nodeWithId: GraphNode = {
           id: newNode.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           position: { x: 0, y: 0 },
           ...newNode
         } as GraphNode
-        nodes.push(nodeWithId)
+        const nodes = [...get().nodes, nodeWithId]
         nodesMapping.set(nodeWithId.id, nodeWithId)
         const filteredNodes = computeFilteredNodes(nodes, filters)
         const filteredEdges = computeFilteredEdges(edges, filteredNodes)
@@ -190,12 +190,12 @@ export const useGraphStore = create<GraphState>()(
       },
 
       addEdge: (newEdge) => {
-        const { edges, edgesMapping, nodes, filters } = get()
+        const { edgesMapping, nodes, filters } = get()
         const edgeWithId: GraphEdge = {
           id: newEdge.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           ...newEdge
         } as GraphEdge
-        edges.push(edgeWithId)
+        const edges = [...get().edges, edgeWithId]
         edgesMapping.set(edgeWithId.id, edgeWithId)
         const filteredNodes = computeFilteredNodes(nodes, filters)
         const filteredEdges = computeFilteredEdges(edges, filteredNodes)
