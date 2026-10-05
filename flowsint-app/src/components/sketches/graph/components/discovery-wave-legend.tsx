@@ -3,7 +3,7 @@ import { waveColor } from '../utils/discovery-waves'
 
 export function DiscoveryWaveLegend({ waves }: Pick<DiscoveryWaves, 'waves'>) {
   return (
-    <div className="absolute bottom-3 left-3 max-h-48 overflow-y-auto rounded-lg border border-border bg-background/90 px-2 py-1.5 text-xs backdrop-blur-sm">
+    <div className="absolute bottom-3 left-1/2 max-h-48 -translate-x-1/2 overflow-y-auto rounded-lg border border-border bg-background/90 px-2 py-1.5 text-xs backdrop-blur-sm">
       <div className="mb-1 font-medium text-muted-foreground">Discovery waves</div>
       {[{ scanId: 'seed', enricher: 'Seeds' }, ...waves].map(({ scanId, enricher }, wave) => (
         <div key={scanId} className="flex items-center gap-1.5" title={wave ? scanId : undefined}>
