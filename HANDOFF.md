@@ -380,3 +380,15 @@ Next:
   - imported/batch nodes with no incoming edge count as seeds;
   - `merge_nodes` and the node PUT bypass create-only provenance (enricher names only).
 - Team deployment still needs approval.
+
+## 2026-10-05 — filter the graph by pivot depth
+Done:
+- Branch `feat/pivot-depth-filter`, stacked on `feat/discovery-wave-rings` (base = `feat/discovery-wave-rings`), merged here as ea1cc307.
+- Click a "Pivot depth" legend row to hide that depth; click it again to show it. A hidden row is dimmed and struck through, and the legend counts stay computed from the whole graph. The filter is `filters.hiddenWaves`, applied in the store's `computeFilteredNodes`, so the table, path finder and select-all see the same nodes. Depth is computed on the unfiltered graph, so hiding a depth never renumbers the others.
+- The toolbar filter indicator counts hidden depths. Switching sketches (`reset`) or turning the rings off clears the depth filter.
+- Merge note: here `computeFilteredEdges` also takes `filters` (evidence filters), and `sketches/index.tsx` seeds `hiddenWaves: []` for a new sketch.
+- The app image was rebuilt as `v1.2.13-148-gea1cc307`, and the :5173 bundle contains the feature. A live click test was not run: the browser relay adopted the user's visible tab, so browser driving stopped.
+
+Next:
+- Click a legend row on sketch d15772f2: the node count should drop and the legend counts should not change.
+- Team deployment still needs approval.
