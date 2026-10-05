@@ -1,29 +1,40 @@
 import type { GraphNode } from '@/types'
 import { WAVE_RING_COLORS, WAVE_SEED_COLOR } from './constants'
 
+export type ScanRun = { id: string; started_at?: string | null }
+
 export type DiscoveryWaves = {
   // nodeId -> wave (0 = seed: manual, imported or created before provenance existed)
   waveOf: Map<string, number>
-  // waves[i] describes wave i + 1
-  waves: { scanId: string; enricher: string }[]
+  // waves[i] describes wave i + 1; enricher is undefined for a run that created no node
+  waves: { scanId: string; enricher?: string }[]
 }
 
-// Wave N = the Nth enricher run (scan) that first created nodes in this sketch,
-// ordered by its earliest node creation. Runs that only matched existing nodes leave no trace.
-export function computeDiscoveryWaves(nodes: GraphNode[]): DiscoveryWaves {
-  const runs = new Map<string, { enricher: string; firstSeen: number }>()
+// Scan timestamps are naive UTC; without a zone suffix Date.parse would read them as local time.
+const toMs = (iso?: string | null) =>
+  (iso && Date.parse(/z|[+-]\d\d:?\d\d$/i.test(iso) ? iso : `${iso}Z`)) || Infinity
+
+// Wave N = the Nth enricher run (scan) of this sketch, ordered by start time. Runs that found
+// nothing new keep their number; a run whose scan row is gone is placed by its earliest node.
+export function computeDiscoveryWaves(nodes: GraphNode[], scans: ScanRun[] = []): DiscoveryWaves {
+  const known = new Set(scans.map((s) => s.id))
+  const runs = new Map<string, { enricher?: string; at: number }>(
+    scans.map((s) => [s.id, { at: toMs(s.started_at) }])
+  )
   for (const node of nodes) {
     const { origin, created_by_scan, created_by_enricher, created_at } = node.nodeMetadata
     if (origin !== 'enricher' || !created_by_scan) continue
-    const t = Date.parse(created_at ?? '') || Infinity
+    const t = toMs(created_at)
     const run = runs.get(created_by_scan)
-    if (!run)
-      runs.set(created_by_scan, { enricher: created_by_enricher ?? 'unknown', firstSeen: t })
-    else if (t < run.firstSeen) run.firstSeen = t
+    if (!run) runs.set(created_by_scan, { enricher: created_by_enricher ?? 'unknown', at: t })
+    else {
+      run.enricher ??= created_by_enricher ?? 'unknown'
+      if (!known.has(created_by_scan) && t < run.at) run.at = t
+    }
   }
 
   const ordered = [...runs.entries()].sort(
-    ([a, ra], [b, rb]) => ra.firstSeen - rb.firstSeen || a.localeCompare(b)
+    ([a, ra], [b, rb]) => ra.at - rb.at || a.localeCompare(b)
   )
   const waveOfScan = new Map(ordered.map(([scanId], i) => [scanId, i + 1]))
 
