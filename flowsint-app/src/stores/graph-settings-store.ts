@@ -58,10 +58,10 @@ const DEFAULT_SETTINGS = {
       description: 'Node style, filled by default.'
     },
     showDiscoveryWaves: {
-      name: 'Discovery wave rings',
+      name: 'Pivot depth rings',
       type: 'boolean',
       value: true,
-      description: 'Ring color shows which enricher run first discovered a node (grey = seed).'
+      description: 'Ring color shows how many pivots away from a seed a node is (grey = seed).'
     },
     dotStyle: {
       name: 'Node style (dot/card)',

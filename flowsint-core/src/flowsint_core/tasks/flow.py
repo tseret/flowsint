@@ -1,7 +1,7 @@
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
-from celery import Task, states
+from celery import states
 from sqlalchemy.orm import Session
 
 from flowsint_core.utils import to_json_serializable
@@ -20,12 +20,12 @@ db: Session = next(get_db())
 
 @celery.task(name="run_flow", bind=True)
 def run_flow(
-    self: Task,
-    enricher_branches: List[dict],
+    self,
+    enricher_branches,
     serialized_objects: List[dict],
     sketch_id: str | None,
     owner_id: Optional[str] = None,
-) -> Dict[str, Any]:
+):
     session = SessionLocal()
 
     try:
@@ -38,7 +38,6 @@ def run_flow(
             id=scan_id,
             status=EventLevel.PENDING,
             sketch_id=uuid.UUID(sketch_id) if sketch_id else None,
-            enricher="flow",
         )
         session.add(scan)
         session.commit()
@@ -49,23 +48,21 @@ def run_flow(
             try:
                 vault = create_vault_service(session).for_user(uuid.UUID(owner_id))
             except Exception as e:
-                # Same nullable sketch_id as in tasks/enricher.py.
                 Logger.error(
-                    sketch_id,  # type: ignore[arg-type]
-                    {"message": f"Failed to create vault: {str(e)}"},
+                    sketch_id, {"message": f"Failed to create vault: {str(e)}"}
                 )
 
-        branches = [FlowBranch(**branch) for branch in enricher_branches]
+        enricher_branches = [FlowBranch(**branch) for branch in enricher_branches]
         enricher = FlowOrchestrator(
-            sketch_id=sketch_id,  # type: ignore[arg-type]  # the flows route always sends one
+            sketch_id=sketch_id,
             scan_id=str(scan_id),
-            enricher_branches=branches,
+            enricher_branches=enricher_branches,
             vault=vault,
         )
 
         # Use the synchronous scan method which internally handles the async operations
         # Pass serialized objects instead of strings - the preprocess will handle them
-        results = enricher.scan(values=serialized_objects)  # type: ignore[arg-type]
+        results = enricher.scan(values=serialized_objects)
 
         scan.status = EventLevel.COMPLETED
         scan.details = to_json_serializable(results)
@@ -78,13 +75,10 @@ def run_flow(
         error_logs = f"An error occurred: {str(ex)}"
         print(f"Error in task: {error_logs}")
 
-        failed_scan = (
-            session.query(Scan).filter(Scan.id == uuid.UUID(self.request.id)).first()
-        )
-        if failed_scan:
-            failed_scan.status = EventLevel.FAILED
-            # Scan.error is a legacy Column(), not Mapped[] (see tasks/enricher.py).
-            failed_scan.error = error_logs  # type: ignore[assignment]
+        scan = session.query(Scan).filter(Scan.id == uuid.UUID(self.request.id)).first()
+        if scan:
+            scan.status = EventLevel.FAILED
+            scan.error = error_logs
             session.commit()
 
         self.update_state(state=states.FAILURE)
