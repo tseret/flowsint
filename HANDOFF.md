@@ -367,17 +367,16 @@ Next:
 - If a run's scan revives an edge an analyst soft-deleted, the revived edge survives undo unless one of its endpoints is removed: that scan's observation is not at index 0.
 - Team deployment still needs approval. Draft PR: https://github.com/tseret/flowsint/pull/1.
 
-## 2026-10-04 — discovery wave rings
+## 2026-10-04 — discovery wave rings (reworked 2026-10-05: pivot depth)
 Done:
 - Branch `feat/discovery-wave-rings` (from origin/main, independent of the workspace branch).
 - Nodes record how they entered a sketch: `nodeMetadata.origin` is `manual` or `enricher`, plus `created_by_scan` and `created_by_enricher`. These are written on create only.
-- The new nullable `scans.enricher` column (migration `d2a7c4e9b1f0`) is set by run_enricher, run_template_enricher and flows ("flow").
-- The graph draws one colored ring per discovery wave: seeds/manual nodes are wave 0, and the Nth scan of the sketch by `started_at` is wave N. A legend lists each run's enricher, marks runs with no new nodes, and labels legacy runs "unknown". The setting `showDiscoveryWaves` controls both and defaults to on. The neighbors preview shows no rings, because it has no sketch scans.
-- This workspace has the local-only merge migration `06ec274dd75d`, merging the scans enricher change and the agent_run heads. The app, api, celery and celery-agents images were rebuilt; live smoke ran on sketch a0cba0cf.
+- The ring color is the node's pivot depth. Seeds (nodes no edge points to) are grey. Each step along edge direction gets the next of 7 ordered colors, and the last one is "7+". Depth is a BFS over the unfiltered sketch edges, so legacy nodes work too. A cycle no seed reaches starts at its first node.
+- A "Pivot depth" legend shows the count per depth and the enrichers behind it, taken from `created_by_enricher`; legacy nodes have none. The setting `showDiscoveryWaves` ("Pivot depth rings") defaults to on. The neighbors preview shows no rings.
+- Removed the per-run design: the `scans.enricher` column, migration `d2a7c4e9b1f0`, and the local merge migration `06ec274dd75d`. The local DB was downgraded by hand: the column is dropped and alembic is at `20261004_agent_run_started`. The api, celery, celery-agents and app images were rebuilt. Live smoke on sketch d15772f2 showed Seeds through Pivot 6 (273 nodes).
 
 Next:
 - Known limits:
-  - imported/batch nodes count as seeds;
-  - `merge_nodes` and the node PUT bypass create-only provenance;
-  - a flow is one wave.
+  - imported/batch nodes with no incoming edge count as seeds;
+  - `merge_nodes` and the node PUT bypass create-only provenance (enricher names only).
 - Team deployment still needs approval.
