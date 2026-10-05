@@ -29,19 +29,33 @@ const found = (id: string, scan: string, created_at: string) =>
 const nodes = [
   makeNode('seed', { origin: 'manual', created_at: '2026-01-01T00:00:00Z' }),
   makeNode('legacy'),
-  // Run "b" started first, so it is wave 1 even though its id sorts later.
   found('b1', 'b', '2026-01-01T00:01:00Z'),
-  found('a1', 'a', '2026-01-01T00:02:00Z'),
+  // "a" started first but wrote its first node later (concurrent runs).
+  found('a1', 'a', '2026-01-01T00:05:00Z'),
   found('b2', 'b', '2026-01-01T00:03:00Z')
 ]
 
 describe('computeDiscoveryWaves', () => {
-  it('numbers enricher runs by first creation and treats the rest as seeds', () => {
-    const { waveOf, waves } = computeDiscoveryWaves(nodes)
-    expect(Object.fromEntries(waveOf)).toEqual({ seed: 0, legacy: 0, b1: 1, b2: 1, a1: 2 })
+  it('numbers runs by start time, keeping runs that created nothing', () => {
+    // Naive (zone-less) UTC timestamps, as the scans API returns them.
+    const scans = [
+      { id: 'empty', started_at: '2026-01-01T00:00:10' },
+      { id: 'a', started_at: '2026-01-01T00:00:20' },
+      { id: 'b', started_at: '2026-01-01T00:00:30' }
+    ]
+    const { waveOf, waves } = computeDiscoveryWaves(nodes, scans)
+    expect(Object.fromEntries(waveOf)).toEqual({ seed: 0, legacy: 0, a1: 2, b1: 3, b2: 3 })
     expect(waves).toEqual([
-      { scanId: 'b', enricher: 'e-b' },
-      { scanId: 'a', enricher: 'e-a' }
+      { scanId: 'empty', enricher: undefined },
+      { scanId: 'a', enricher: 'e-a' },
+      { scanId: 'b', enricher: 'e-b' }
     ])
+  })
+
+  it('places runs missing from the scan list by their earliest node', () => {
+    const { waveOf } = computeDiscoveryWaves(nodes, [
+      { id: 'a', started_at: '2026-01-01T00:02:00Z' }
+    ])
+    expect(Object.fromEntries(waveOf)).toMatchObject({ b1: 1, b2: 1, a1: 2 })
   })
 })

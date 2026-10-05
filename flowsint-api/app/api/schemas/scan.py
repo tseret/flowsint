@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, List, Optional
 
 from pydantic import UUID4, BaseModel
@@ -16,3 +17,4 @@ class ScanRead(ORMBase):
     id: UUID4
     sketch_id: Optional[UUID4]
     status: Optional[str]
+    started_at: Optional[datetime] = None

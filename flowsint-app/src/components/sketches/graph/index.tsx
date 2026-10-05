@@ -35,7 +35,10 @@ import { GraphSelectorOverlay } from './components/graph-selector-overlay'
 import { LinkCreationCanvas } from './components/link-creation-overlay'
 import MinimapCanvas from './components/minimap'
 import { DiscoveryWaveLegend } from './components/discovery-wave-legend'
-import { computeDiscoveryWaves, waveColor } from './utils/discovery-waves'
+import { computeDiscoveryWaves, waveColor, type ScanRun } from './utils/discovery-waves'
+import { useQuery } from '@tanstack/react-query'
+import { scanService } from '@/api/scan-service'
+import { queryKeys } from '@/api/query-keys'
 import { Background } from './background'
 import { BackgroundVariant } from './background/background-types'
 import { Maximize } from 'lucide-react'
@@ -110,9 +113,15 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   // Waves come from the unfiltered sketch so filtering never renumbers them.
   const allNodes = useGraphStore((s) => s.nodes)
   const showDiscoveryWaves = forceSettings.showDiscoveryWaves?.value ?? true
+  // Same key as the status bar, which already polls it; the run list gives true run order.
+  const { data: scans } = useQuery<ScanRun[]>({
+    queryKey: [...queryKeys.scans.list, sketchId],
+    queryFn: () => scanService.getSketchScans(sketchId as string),
+    enabled: showDiscoveryWaves && !!sketchId
+  })
   const discoveryWaves = useMemo(
-    () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes) : null),
-    [showDiscoveryWaves, allNodes]
+    () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes, scans) : null),
+    [showDiscoveryWaves, allNodes, scans]
   )
 
   const {

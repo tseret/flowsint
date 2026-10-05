@@ -11,7 +11,9 @@ export function DiscoveryWaveLegend({ waves }: Pick<DiscoveryWaves, 'waves'>) {
             className="h-2.5 w-2.5 shrink-0 rounded-full border-2"
             style={{ borderColor: waveColor(wave) }}
           />
-          <span className="truncate">{wave ? `${wave}. ${enricher}` : enricher}</span>
+          <span className="truncate">
+            {wave ? `${wave}. ${enricher ?? 'no new nodes'}` : enricher}
+          </span>
         </div>
       ))}
     </div>

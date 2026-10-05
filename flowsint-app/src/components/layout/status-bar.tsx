@@ -8,6 +8,7 @@ import { memo } from 'react'
 import { isMac } from '@/lib/utils'
 import { useQuery } from '@tanstack/react-query'
 import { scanService } from '@/api/scan-service'
+import { queryKeys } from '@/api/query-keys'
 import { cn } from '@/utils/cn'
 import { CONFIG } from '@/config'
 export const StatusBar = memo(() => {
@@ -16,7 +17,7 @@ export const StatusBar = memo(() => {
   const toggleConsole = useLayoutStore((s) => s.toggleConsole)
 
   const { data: scans, isLoading } = useQuery({
-    queryKey: ['scans', 'list'],
+    queryKey: [...queryKeys.scans.list, sketch_id],
     queryFn: () => scanService.getSketchScans(sketch_id as string),
     enabled: !!sketch_id,
     refetchInterval: 2500
