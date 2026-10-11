@@ -1,10 +1,9 @@
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
-
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA, request_json
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.domain import Domain
 from flowsint_types.ip import Ip
@@ -42,12 +41,13 @@ class IpToPortsShodanEnricher(Enricher):
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
         return [
+            REFRESH_SCHEMA.copy(),
             {
                 "name": KEY,
                 "type": "vaultSecret",
                 "description": "The Shodan API key.",
                 "required": True,
-            }
+            },
         ]
 
     @classmethod
@@ -60,7 +60,7 @@ class IpToPortsShodanEnricher(Enricher):
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         self._ports: List[Tuple[Ip, Port]] = []
-        self._domains: List[Tuple[Ip, Domain]] = []
+        self._domains: List[Tuple[Ip, Domain, Optional[dict]]] = []
         results: List[OutputType] = []
 
         api_key = self.get_secret(KEY, os.getenv(KEY))
@@ -73,31 +73,16 @@ class IpToPortsShodanEnricher(Enricher):
 
         for ip in data:
             try:
-                # the key travels as a query param: never log the URL
-                response = requests.get(
+                payload = request_json(
+                    self,
+                    "Shodan",
                     f"https://api.shodan.io/shodan/host/{ip.address}",
-                    params={"key": api_key},
-                    timeout=30,
+                    str(api_key),
                 )
-                if response.status_code == 404:
-                    Logger.info(
-                        self.sketch_id,
-                        {"message": f"[Shodan] No information for {ip.address}"},
-                    )
+                if payload is None:
+                    if getattr(self, "_provider_stop", False):
+                        break
                     continue
-                if response.status_code != 200:
-                    self.report_issue(
-                        "quota_exceeded" if response.status_code == 429 else "failed",
-                        f"Shodan returned HTTP {response.status_code}.",
-                    )
-                    Logger.error(
-                        self.sketch_id,
-                        {
-                            "message": f"[Shodan] HTTP {response.status_code} for {ip.address}"
-                        },
-                    )
-                    continue
-                payload = response.json()
 
                 seen = set()
                 for item in payload.get("data") or []:
@@ -119,13 +104,20 @@ class IpToPortsShodanEnricher(Enricher):
                         observed_at=str(item.get("timestamp") or "")[:100] or None,
                         source_ref=f"https://www.shodan.io/host/{ip.address}",
                         fingerprints=indexed_fingerprints(item),
+                        provider_evidence=getattr(self, "last_provider_evidence", None),
                     )
                     results.append(port)
                     self._ports.append((ip, port))
 
                 for hostname in dict.fromkeys(payload.get("hostnames") or []):
                     try:
-                        self._domains.append((ip, Domain(domain=hostname)))
+                        self._domains.append(
+                            (
+                                ip,
+                                Domain(domain=hostname),
+                                getattr(self, "last_provider_evidence", None),
+                            )
+                        )
                     except ValueError:  # skip names Domain rejects, keep the rest
                         continue
             except Exception as e:
@@ -158,11 +150,12 @@ class IpToPortsShodanEnricher(Enricher):
                 provider="Shodan",
                 observed_at=evidence.get("observed_at"),
                 source_ref=evidence.get("source_ref"),
+                provider_evidence=evidence.get("provider_evidence"),
             )
             self.log_graph_message(
                 f"Port {port.number}/{port.protocol} on {ip.address}"
             )
-        for ip, domain in self._domains:
+        for ip, domain, evidence in self._domains:
             self.create_node(ip)
             self.create_node(domain)
             self.create_relationship(
@@ -171,6 +164,7 @@ class IpToPortsShodanEnricher(Enricher):
                 "REVERSE_RESOLVES_TO",
                 provider="Shodan",
                 source_ref=f"https://www.shodan.io/host/{ip.address}",
+                provider_evidence=evidence,
             )
             self.log_graph_message(f"Hostname {domain.domain} for {ip.address}")
         return results

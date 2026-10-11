@@ -109,9 +109,38 @@ again. Failed runs without published findings also support this retry. The
 subscription account and model are checked again before queuing it.
 
 Quota and credential failures block further actions against the same provider
-within that run. A later run may try the provider again. Stopping a run prevents
-new actions; an already dispatched scan may still finish.
+within that run. VirusTotal and Shodan also share credential-scoped cooldowns
+across manual scans and other investigations. Stopping a run prevents new
+actions; an already dispatched scan may still finish.
 
 The model sees bounded graph relationships and observations, including explicit
 loaded/total counts and truncation. Continue to review evidence and draft
 findings before accepting conclusions.
+
+## Scope, budgets and recovery
+
+Open **Scope and budgets** before starting. Permitted domains include their
+subdomains; permitted CIDRs restrict IP and network lookups. Exclusions override
+permissions. Empty permitted lists allow passive pivots from selected seeds,
+within the configured depth. Evidence can mention out-of-scope entities without
+authorizing a lookup against them.
+
+Defaults are two pivot levels, 20 provider requests and 500 new entities.
+Retries consume request allowance; cached responses do not. Autonomous lookups
+are restricted to reviewed request-bounded capabilities. Other catalog enrichers
+remain available manually. New-entity accounting conservatively includes reserved
+identities, so a partial run can stop short of its numerical limit.
+
+Actions are saved before dispatch and use stable task IDs. **Resume collection
+from saved steps** is available to the owner of a failed, unpublished run.
+Completed scans are reused. An interrupted scan retains confirmed graph batches
+and reports any uncertain cross-database commit; the agent then stops collection
+and reports the available evidence instead of spending an uncertain budget again.
+A timed-out scan also stops further collection until its outcome is known.
+
+Facts and hypotheses in draft findings reference specific observation IDs.
+Validation rejects unknown references and mismatched entities or scans; it does
+not prove that the model's interpretation is true. Local correlation compares
+recorded fact snapshots for shared fingerprints, same-provider changes, and
+different-provider disagreements at the exact same timestamp. Legacy records
+without those snapshots are not reconstructed from current entity properties.

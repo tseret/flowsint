@@ -1,3 +1,4 @@
+import json
 from unittest.mock import ANY, Mock, call
 
 import pytest
@@ -10,7 +11,12 @@ from flowsint_types.phrase import Phrase
 
 
 def response(payload, status=200):
-    return Mock(status_code=status, json=Mock(return_value=payload))
+    return Mock(
+        status_code=status,
+        headers={},
+        iter_content=Mock(return_value=[json.dumps(payload).encode()]),
+        json=Mock(return_value=payload),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +30,7 @@ def capture_log(monkeypatch):
 async def test_banner_hash_pivot_keeps_provenance_and_distinct_peers(monkeypatch):
     calls = []
 
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         calls.append((url, params, timeout))
         if url.endswith("/host/198.51.100.1"):
             return response(
@@ -95,11 +101,11 @@ async def test_banner_hash_pivot_keeps_provenance_and_distinct_peers(monkeypatch
     peers = await enricher.scan([source])
     assert [ip.address for ip in peers] == ["203.0.113.7", "203.0.113.8"]
     assert calls == [
-        ("https://api.shodan.io/shodan/host/198.51.100.1", {"key": "secret"}, 30),
+        ("https://api.shodan.io/shodan/host/198.51.100.1", {"key": "secret"}, (5, 30)),
         (
             "https://api.shodan.io/shodan/host/search",
             {"key": "secret", "query": "hash:-42", "page": 1},
-            30,
+            (5, 30),
         ),
     ]
 
@@ -137,7 +143,7 @@ async def test_execute_resolves_vault_key_and_keeps_launch_parameters(monkeypatc
     vault.get_secret.return_value = "secret"
     calls = []
 
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         calls.append((url, params))
         if url.endswith("/host/198.51.100.1"):
             return response(
@@ -218,7 +224,7 @@ async def test_two_pages_review_uncorroborated_candidates_without_graphing(
 ):
     calls = []
 
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         if url.endswith("/host/198.51.100.1"):
             return response(
                 {
@@ -297,7 +303,7 @@ async def test_two_pages_review_uncorroborated_candidates_without_graphing(
 async def test_product_hunt_selects_matching_source_banner(monkeypatch):
     calls = []
 
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         calls.append((url, params))
         if url.endswith("/host/198.51.100.1"):
             return response(
@@ -346,7 +352,7 @@ async def test_product_hunt_selects_matching_source_banner(monkeypatch):
 async def test_duplicate_sources_do_not_repeat_paid_search(monkeypatch, capture_log):
     calls = []
 
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         calls.append((url, params))
         if url.endswith("/host/198.51.100.1"):
             return response({"data": [{"port": 443, "hash": 99}]})
@@ -383,7 +389,7 @@ async def test_duplicate_sources_do_not_repeat_paid_search(monkeypatch, capture_
 async def test_inferred_product_needs_both_independent_fingerprints(
     monkeypatch, capture_log
 ):
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         if url.endswith("/host/198.51.100.1"):
             return response(
                 {
@@ -443,7 +449,7 @@ async def test_no_port_hunts_distinct_transports_with_two_page_total_limit(
 ):
     calls = []
 
-    def get(url, *, params, timeout):
+    def get(url, *, params, timeout, **kwargs):
         calls.append((url, params))
         if url.endswith("/host/198.51.100.1"):
             return response(
@@ -532,11 +538,14 @@ async def test_provider_failure_fails_scan_without_exposing_key(monkeypatch):
             "target_domain": "example.org",
         },
     )
-    with pytest.raises(
-        RuntimeError, match="Shodan host lookup failed \\(HTTP 403\\)"
-    ) as error:
-        await enricher.scan([Ip(address="198.51.100.1")])
-    assert "secret" not in str(error.value)
+    assert (
+        await enricher.scan([Ip(address="198.51.100.1"), Ip(address="198.51.100.2")])
+        == []
+    )
+    assert enricher._provider_stop
+    assert enricher.provider_request_count == 1
+    assert "403" in enricher._issues[0]["message"]
+    assert "secret" not in str(enricher._issues)
 
 
 @pytest.mark.asyncio

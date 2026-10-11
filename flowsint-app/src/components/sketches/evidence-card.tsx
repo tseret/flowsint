@@ -5,7 +5,39 @@ import { sketchService } from '@/api/sketch-service'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { evidenceUrl, formatEvidenceValue, parseEvidence } from '@/lib/evidence-display'
-import { outcomeLabels } from '@/types/scan'
+import { outcomeLabels, type RunSummary } from '@/types/scan'
+
+export function ScanPersistenceEvidence({ summary }: { summary: RunSummary }) {
+  return (
+    <div className="space-y-2 text-xs">
+      {summary.interrupted && <p>Run interrupted; review the recorded partial evidence.</p>}
+      {summary.graph_commit_uncertain && (
+        <p role="alert">Graph commit could not be confirmed. Check the graph before retrying.</p>
+      )}
+      {summary.committed_graph_operations !== undefined && (
+        <p>Confirmed committed graph operations: {summary.committed_graph_operations}</p>
+      )}
+      {summary.provider_request_count !== undefined && (
+        <p>Provider requests: {summary.provider_request_count}</p>
+      )}
+      {summary.provider_evidence?.map((item, index) => (
+        <dl
+          key={`${item.request_id}-${index}`}
+          className="grid grid-cols-2 gap-1 rounded border p-2"
+        >
+          <dt>Provider</dt>
+          <dd>{item.provider}</dd>
+          <dt>Response</dt>
+          <dd>{item.cache_hit ? 'Reused recorded response' : 'Fetched from provider'}</dd>
+          <dt>Originally fetched</dt>
+          <dd>{item.fetched_at || 'Not recorded'}</dd>
+          <dt>Source scan</dt>
+          <dd className="break-all">{item.source_scan_id || 'Not recorded'}</dd>
+        </dl>
+      ))}
+    </div>
+  )
+}
 
 function ScanEvidence({ id }: { id: string }) {
   const scan = useQuery({ queryKey: ['scan-evidence', id], queryFn: () => scanService.getById(id) })
@@ -22,6 +54,7 @@ function ScanEvidence({ id }: { id: string }) {
       <p>
         Started {scan.data.started_at} · Completed {scan.data.completed_at || 'Not recorded'}
       </p>
+      {scan.data.summary && <ScanPersistenceEvidence summary={scan.data.summary} />}
       <pre className="overflow-auto whitespace-pre-wrap text-xs">
         {JSON.stringify(scan.data.summary, null, 2)}
       </pre>

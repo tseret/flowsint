@@ -1,10 +1,9 @@
 from collections.abc import Iterator
 from typing import Any
 
-import requests
-
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA, request_json
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.ip import Ip
 from flowsint_types.phrase import Phrase
@@ -35,6 +34,7 @@ class IpToBannerHashShodanEnricher(Enricher):
     @classmethod
     def get_params_schema(cls) -> list[dict]:
         return [
+            REFRESH_SCHEMA.copy(),
             {
                 "name": "SHODAN_API_KEY",
                 "type": "vaultSecret",
@@ -83,7 +83,9 @@ class IpToBannerHashShodanEnricher(Enricher):
         if not key:
             raise ValueError("SHODAN_API_KEY is required")
 
-        self._matches: list[tuple[Ip, Phrase, list[Ip]]] = []
+        self._matches: list[
+            tuple[Ip, Phrase, list[Ip], dict | None, dict[str, dict | None]]
+        ] = []
         results: list[Ip] = []
         seen_results: set[str] = set()
         credits_remaining: dict[str, int] = {}
@@ -101,28 +103,26 @@ class IpToBannerHashShodanEnricher(Enricher):
             service_transport = service.get("transport", "tcp")
 
             peers: list[Ip] = []
+            source_evidence = service.get("_provider_evidence")
+            peer_evidence: dict[str, dict | None] = {}
             promoted: set[str] = set()
             review: dict[str, str] = {}
             pages = 0
             query = f"hash:{banner_hash}"
             for page in range(1, page_limit + 1):
-                try:
-                    matches = requests.get(
-                        "https://api.shodan.io/shodan/host/search",
-                        params={"key": key, "query": query, "page": page},
-                        timeout=30,
-                    )
-                except requests.RequestException:
-                    raise RuntimeError("Shodan banner search failed") from None
-                if matches.status_code != 200:
-                    raise RuntimeError(
-                        f"Shodan banner search failed (HTTP {matches.status_code})"
-                    )
+                payload = request_json(
+                    self,
+                    "Shodan",
+                    "https://api.shodan.io/shodan/host/search",
+                    str(key),
+                    {"query": query, "page": page},
+                )
+                if payload is None:
+                    break
                 pages += 1
                 credits_remaining[source.address] = (
                     credits_remaining.get(source.address, 2) - 1
                 )
-                payload = matches.json()
                 for match in payload.get("matches", []):
                     address = match.get("ip_str")
                     if (
@@ -192,6 +192,9 @@ class IpToBannerHashShodanEnricher(Enricher):
                         promoted.add(address)
                         review.pop(address, None)
                         peers.append(peer)
+                        peer_evidence[address] = getattr(
+                            self, "last_provider_evidence", None
+                        )
                         if address not in seen_results:
                             results.append(peer)
                             seen_results.add(address)
@@ -227,7 +230,13 @@ class IpToBannerHashShodanEnricher(Enricher):
             )
             if peers:
                 self._matches.append(
-                    (source, Phrase(text=f"Shodan banner hash:{banner_hash}"), peers)
+                    (
+                        source,
+                        Phrase(text=f"Shodan banner hash:{banner_hash}"),
+                        peers,
+                        source_evidence,
+                        peer_evidence,
+                    )
                 )
         return results
 
@@ -246,23 +255,20 @@ class IpToBannerHashShodanEnricher(Enricher):
             if source.address in seen_sources:
                 continue
             seen_sources.add(source.address)
-            try:
-                host = requests.get(
-                    f"https://api.shodan.io/shodan/host/{source.address}",
-                    params={"key": key},
-                    timeout=30,
-                )
-            except requests.RequestException:
-                raise RuntimeError("Shodan host lookup failed") from None
-            if host.status_code == 404:
+            payload = request_json(
+                self,
+                "Shodan",
+                f"https://api.shodan.io/shodan/host/{source.address}",
+                str(key),
+            )
+            if payload is None:
+                if getattr(self, "_provider_stop", False):
+                    break
                 continue
-            if host.status_code != 200:
-                raise RuntimeError(
-                    f"Shodan host lookup failed (HTTP {host.status_code})"
-                )
+            source_evidence = getattr(self, "last_provider_evidence", None)
             services = [
-                banner
-                for banner in host.json().get("data", [])
+                {**banner, "_provider_evidence": source_evidence}
+                for banner in payload.get("data", [])
                 if banner.get("port") == port or port is None
                 if transport is None or banner.get("transport", "tcp") == transport
                 if type(banner.get("hash")) is int and banner["hash"] != 0
@@ -295,6 +301,8 @@ class IpToBannerHashShodanEnricher(Enricher):
                 )
                 continue
             for index, service in enumerate(services):
+                if getattr(self, "_provider_stop", False):
+                    return
                 remaining = credits_remaining.get(source.address, 2)
                 if not remaining:
                     Logger.info(
@@ -313,13 +321,23 @@ class IpToBannerHashShodanEnricher(Enricher):
     def postprocess(
         self, results: list[Ip], input_data: list[Ip] | None = None
     ) -> list[Ip]:
-        for source, banner_hash, peers in self._matches:
+        for source, banner_hash, peers, source_evidence, peer_evidence in self._matches:
             self.create_node(source)
             self.create_node(banner_hash)
-            self.create_relationship(source, banner_hash, "HAS_BANNER_HASH")
+            self.create_relationship(
+                source,
+                banner_hash,
+                "HAS_BANNER_HASH",
+                provider_evidence=source_evidence,
+            )
             for peer in peers:
                 self.create_node(peer)
-                self.create_relationship(banner_hash, peer, "MATCHES_BANNER_HASH")
+                self.create_relationship(
+                    banner_hash,
+                    peer,
+                    "MATCHES_BANNER_HASH",
+                    provider_evidence=peer_evidence[peer.address],
+                )
         return results
 
 

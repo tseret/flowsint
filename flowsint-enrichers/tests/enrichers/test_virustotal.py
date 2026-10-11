@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import requests
 
@@ -28,6 +30,14 @@ class Response:
         self.status_code = status
         self.payload = payload or {}
 
+    headers = {}
+
+    def close(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        yield json.dumps(self.json()).encode()
+
     def json(self):
         return self.payload
 
@@ -41,7 +51,7 @@ def setup(monkeypatch, cls, responder, key="k", params=None):
         calls.append((url, kwargs))
         return responder(url)
 
-    monkeypatch.setattr("flowsint_enrichers.virustotal.requests.get", get)
+    monkeypatch.setattr("flowsint_enrichers.provider_http.requests.get", get)
     return enricher, calls
 
 
@@ -93,7 +103,7 @@ async def test_pagination_dedupes_entities_preserves_observations(
     assert edges[0][3]["provider"] == "VirusTotal"
     assert edges[0][3]["source_ref"].endswith("1.2.3.4foo.com")
     assert calls[0][1]["params"] == {"limit": 40}
-    assert calls[1][1]["params"] is None
+    assert calls[1][1]["params"] == {}
     assert calls[0][1]["allow_redirects"] is False
     assert enricher._issues == []
 

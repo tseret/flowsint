@@ -18,11 +18,17 @@ from ..core.graph import create_graph_service
 from ..core.graph.serializer import GraphSerializer
 from ..core.llm.protocol import LLMProvider, SubscriptionError
 from ..core.logger import Logger
-from ..core.models import AgentRun, Key, Scan, Sketch
+from ..core.models import AgentRun, CaseItem, Key, Scan, Sketch
 from ..core.postgre_db import SessionLocal
 from ..core.services import create_chat_service, create_type_registry_service
 from ..core.services.collaboration_service import CollaborationService
+from ..core.services.copilot_policy import (
+    InvestigationScope,
+    entity_in_scope,
+    validate_scope_step,
+)
 from ..core.services.copilot_service import (
+    PASSIVE_ENRICHERS,
     PASSIVE_PARAMS,
     AgentDecision,
     AgentReport,
@@ -35,6 +41,8 @@ from ..core.services.copilot_service import (
     validate_decision,
     validate_report,
 )
+from ..core.services.evidence_correlations import summarize_evidence
+from ..core.task_lease import task_lease
 
 load_all_enrichers()
 
@@ -52,8 +60,15 @@ TERMINAL_SCAN = {"COMPLETED", "FAILED"}
 ACTIVE = ("running", "reporting", "publishing")
 
 
-@celery.task(name="run_investigation_agent")
+@celery.task(name="run_investigation_agent", acks_late=True, reject_on_worker_lost=True)
 def run_investigation_agent(run_id: str, report_only: bool = False) -> None:
+    with SessionLocal() as lease_session:
+        with task_lease(lease_session, run_id) as acquired:
+            if acquired:
+                _run_investigation_agent(run_id, report_only)
+
+
+def _run_investigation_agent(run_id: str, report_only: bool = False) -> None:
     session = SessionLocal()
     try:
         run = session.get(AgentRun, uuid.UUID(run_id))
@@ -134,6 +149,9 @@ def _scan_result(scan: Scan) -> dict[str, Any]:
         "outcome": str(summary.get("outcome") or scan.status.lower()),
         "output_count": summary.get("output_count"),
         "errors": summary.get("errors") or [],
+        "provider_request_count": summary.get("provider_request_count", 0),
+        "new_entity_count": summary.get("new_entity_count", 0),
+        "graph_commit_uncertain": summary.get("graph_commit_uncertain", False),
     }
 
 
@@ -149,6 +167,57 @@ async def _await_scan(
         if monotonic() >= until:
             return {"outcome": "timeout"}
         await asyncio.sleep(POLL_S)
+
+
+def _dispatch(step: dict[str, Any], run: AgentRun) -> None:
+    celery.send_task(
+        "run_enricher",
+        args=[step["enricher"], step["objects"], str(run.sketch_id), str(run.owner_id)],
+        kwargs={
+            "params": PASSIVE_PARAMS.get(step["enricher"], {}),
+            "execution_policy": step.get("execution_policy"),
+        },
+        task_id=step["scan_id"],
+    )
+
+
+def _refresh_frontier(
+    graph_service: Any,
+    run: AgentRun,
+    steps: list[dict[str, Any]],
+    frontier: dict[str, int],
+) -> None:
+    depths = {
+        step["scan_id"]: 1
+        + min((frontier.get(node, 0) for node in step["node_ids"]), default=0)
+        for step in steps
+    }
+    if not depths:
+        return
+    rows = graph_service.query(
+        "MATCH (n) WHERE n.sketch_id = $sketch AND n.deleted_at IS NULL "
+        "AND toLower(n.nodeType) IN $types "
+        "AND (n.`nodeMetadata.created_by_scan` IN $scans OR n.`nodeMetadata.scan_id` IN $scans) "
+        "RETURN elementId(n) AS id, CASE WHEN n.`nodeMetadata.created_by_scan` IN $scans "
+        "THEN n.`nodeMetadata.created_by_scan` ELSE n.`nodeMetadata.scan_id` END AS scan_id, "
+        "n.nodeType AS nodeType, n.nodeLabel AS nodeLabel "
+        "ORDER BY elementId(n) LIMIT 2000",
+        {
+            "sketch": str(run.sketch_id),
+            "scans": list(depths),
+            "types": list(set(PASSIVE_ENRICHERS.values())),
+        },
+    )
+    policy = InvestigationScope.model_validate(run.policy or {})
+    for row in rows:
+        depth = depths.get(row["scan_id"])
+        if (
+            depth is not None
+            and depth <= policy.max_pivot_depth
+            and entity_in_scope(policy, row)
+            and len(frontier) < 2010
+        ):
+            frontier[row["id"]] = min(frontier.get(row["id"], depth), depth)
 
 
 async def _investigate(
@@ -169,23 +238,59 @@ async def _investigate(
     )
     seeds = set(run.seed_ids)
     steps: list[dict[str, Any]] = list(run.steps or [])
+    policy = InvestigationScope.model_validate(run.policy or {})
+    frontier = dict(run.frontier or {node: 0 for node in run.seed_ids})
+    # A persisted dispatch is replayed with the same ID; the enricher lease prevents repeat calls.
+    for saved in steps if not report_only else []:
+        if saved.get("outcome") in ("queued", "running", "timeout"):
+            scan = session.get(Scan, uuid.UUID(saved["scan_id"]))
+            if scan is not None and scan.status in TERMINAL_SCAN:
+                saved.update(_scan_result(scan))
+                continue
+            if saved.get("objects") is not None:
+                _dispatch(saved, run)
+            saved.update(
+                await _await_scan(
+                    session,
+                    run,
+                    saved["scan_id"],
+                    min(loop_until, monotonic() + STEP_TIMEOUT_S),
+                )
+            )
+    _save_steps(session, run, steps)
     done = {(step["enricher"], node) for step in steps for node in step["node_ids"]}
     feedback: str | None = None
     rejected = 0
 
-    while not report_only and len(steps) < run.max_steps and rejected < MAX_REJECTED:
+    while (
+        not report_only
+        and len(steps) < run.max_steps
+        and rejected < MAX_REJECTED
+        and not any(step.get("graph_commit_uncertain") for step in steps)
+        and not any(step.get("outcome") == "timeout" for step in steps)
+    ):
         if _cancelled(session, run):
             return
-        centers = list(
-            dict.fromkeys(
-                [
-                    *run.seed_ids,
-                    *(node for step in steps[-9:] for node in step["node_ids"]),
-                ]
-            )
+        _refresh_frontier(graph_service, run, steps, frontier)
+        run.frontier = dict(frontier)
+        session.commit()
+        centers = sorted(
+            frontier,
+            key=lambda node: (
+                sum(node in step["node_ids"] for step in steps),
+                frontier[node],
+                node,
+            ),
         )[:100]
         graph = graph_service.get_graph_slice(center_ids=centers, limit=150)
         nodes = {str(node.id): node for node in graph.nodes if node.id}
+        nodes = {
+            key: node
+            for key, node in nodes.items()
+            if key in frontier
+            and frontier[key] <= policy.max_pivot_depth
+            and entity_in_scope(policy, node.model_dump(mode="json"))
+        }
         blocked = {
             provider_id
             for step in steps
@@ -198,6 +303,7 @@ async def _investigate(
                 ENRICHER_REGISTRY.list(),
                 [node.model_dump(mode="json") for node in nodes.values()],
                 keys,
+                bounded_requests=True,
             )
             if not item["missing_keys"]
             and not blocked.intersection(item["provider_ids"])
@@ -213,6 +319,20 @@ async def _investigate(
                 if node.nodeMetadata.created_by_scan
                 in {step["scan_id"] for step in steps}
             },
+        )
+        observation["investigation_policy"] = policy.model_dump(mode="json")
+        observation["correlations"] = summarize_evidence(observation)
+        observation["remaining_provider_requests"] = max(
+            0,
+            policy.max_provider_requests
+            - sum(
+                s.get("provider_request_count", s.get("reserved_requests", 0))
+                for s in steps
+            ),
+        )
+        observation["remaining_new_entities"] = max(
+            0,
+            policy.max_graph_growth - sum(s.get("new_entity_count", 0) for s in steps),
         )
         history = [
             {
@@ -247,6 +367,22 @@ async def _investigate(
             step = validate_decision(
                 decision, run.sketch_id, run.objective, catalog, done
             )
+            request_cost = next(
+                item["request_cost"]
+                for item in catalog
+                if item["enricher"] == step.enricher
+            ) * len(step.node_ids)
+            validate_scope_step(
+                policy,
+                [nodes[node].model_dump(mode="json") for node in step.node_ids],
+                frontier,
+                sum(
+                    s.get("provider_request_count", s.get("reserved_requests", 0))
+                    for s in steps
+                ),
+                sum(s.get("new_entity_count", 0) for s in steps),
+                estimated_requests=request_cost,
+            )
         except ValueError as error:  # pydantic ValidationError is a ValueError
             rejected += 1
             feedback = str(error)
@@ -260,19 +396,24 @@ async def _investigate(
         ]
         if _cancelled(session, run):
             return
-        task = celery.send_task(
-            "run_enricher",
-            args=[step.enricher, objects, str(run.sketch_id), str(owner_id)],
-            kwargs={"params": PASSIVE_PARAMS.get(step.enricher, {})},
-        )
         record: dict[str, Any] = {
             "step": len(steps) + 1,
             "enricher": step.enricher,
             "node_ids": step.node_ids,
             "reason": step.reason,
             "thought": decision.thought,
-            "scan_id": str(task.id),
-            "outcome": "running",
+            "scan_id": str(uuid.uuid4()),
+            "outcome": "queued",
+            "objects": objects,
+            "reserved_requests": request_cost,
+            "execution_policy": {
+                "max_provider_requests": request_cost,
+                "max_new_entities": max(
+                    0,
+                    policy.max_graph_growth
+                    - sum(s.get("new_entity_count", 0) for s in steps),
+                ),
+            },
             "provider_ids": next(
                 item["provider_ids"]
                 for item in catalog
@@ -282,6 +423,7 @@ async def _investigate(
         steps.append(record)
         done |= {(step.enricher, node) for node in step.node_ids}
         _save_steps(session, run, steps)
+        _dispatch(record, run)
         record.update(
             await _await_scan(
                 session,
@@ -343,6 +485,7 @@ async def _investigate(
         f"{step.get('output_count', 'unknown')} results [scan:{step['scan_id']}]."
         for step in steps
     )
+    observation["correlations"] = summarize_evidence(observation)
     if not _transition(
         session, run, ("running", "reporting"), "reporting", report=partial
     ):
@@ -361,7 +504,10 @@ async def _investigate(
             continue
         try:
             report = validate_report(
-                AgentReport.model_validate(parse_model_json(text)), scan_ids, node_ids
+                AgentReport.model_validate(parse_model_json(text)),
+                scan_ids,
+                node_ids,
+                observation=observation,
             )
             break
         except ValueError as error:
@@ -371,7 +517,9 @@ async def _investigate(
             f"The model could not produce a valid evidence-linked report: {feedback}"
         )
     # Claim publication atomically; a cancel that landed first wins.
-    if not _transition(session, run, ("reporting",), "publishing"):
+    if not _transition(
+        session, run, ("reporting",), "publishing", report=report.report
+    ):
         return
     finding_ids, publish_error = _publish_findings(session, run, report, owner_id)
     _transition(
@@ -394,7 +542,20 @@ def _publish_findings(
     collaboration = CollaborationService(session)
     finding_ids: list[str] = []
     try:
-        for finding in report.findings:
+        existing = {}
+        for saved in session.query(CaseItem).filter(
+            CaseItem.sketch_id == run.sketch_id, CaseItem.evidence.contains(str(run.id))
+        ):
+            try:
+                reference = json.loads(saved.evidence or "{}")
+            except (ValueError, TypeError):
+                continue
+            if reference.get("agent_run_id") == str(run.id):
+                existing[reference.get("agent_finding_index")] = saved
+        for index, finding in enumerate(report.findings):
+            if index in existing:
+                finding_ids.append(str(existing[index].id))
+                continue
             item = collaboration.create(
                 sketch.investigation_id,
                 owner_id,
@@ -405,11 +566,19 @@ def _publish_findings(
                     "kind": "finding",
                     "body": finding.body,
                     "evidence": json.dumps(
-                        {"agent_run_id": str(run.id), "scan_ids": finding.scan_ids}
+                        {
+                            "agent_run_id": str(run.id),
+                            "scan_ids": finding.scan_ids,
+                            "agent_finding_index": index,
+                            "kind": finding.kind,
+                            "observation_ids": finding.observation_ids,
+                        }
                     ),
                 },
             )
             finding_ids.append(str(item.id))
+            run.finding_ids = list(finding_ids)
+            session.commit()
     except Exception as error:
         session.rollback()
         return (

@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from flowsint_core.core.enricher_base import Enricher
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_enrichers.virustotal import KEY_SCHEMA, reputation, reputation_graph
 from flowsint_types.domain import Domain
@@ -24,7 +25,7 @@ class DomainToReputationVirusTotal(Enricher):
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
-        return [KEY_SCHEMA.copy()]
+        return [REFRESH_SCHEMA.copy(), KEY_SCHEMA.copy()]
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         return await reputation(self, data, "domains", "domain")

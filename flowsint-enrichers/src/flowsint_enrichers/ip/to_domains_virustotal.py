@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from flowsint_core.core.enricher_base import Enricher
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_enrichers.virustotal import (
     HOSTS_SCHEMA,
@@ -23,7 +24,12 @@ class IpToDomainsVirusTotal(Enricher):
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
-        return [KEY_SCHEMA.copy(), PAGE_SCHEMA.copy(), HOSTS_SCHEMA.copy()]
+        return [
+            REFRESH_SCHEMA.copy(),
+            KEY_SCHEMA.copy(),
+            PAGE_SCHEMA.copy(),
+            HOSTS_SCHEMA.copy(),
+        ]
 
     @classmethod
     def name(cls) -> str:
@@ -63,7 +69,9 @@ class IpToDomainsVirusTotal(Enricher):
                 except (ValueError, OverflowError, OSError):
                     continue
                 source = (row.get("links") or {}).get("self") or url
-                pairs.append((output, item, observed, source))
+                pairs.append(
+                    (output, item, observed, source, row.get("_provider_evidence"))
+                )
                 hosts.setdefault(value, output)
             # ponytail: counts only hostnames in the retrieved max_pages; raise max_pages for a stricter shared-hosting check.
             if max_hosts and len(hosts) > max_hosts:
@@ -86,7 +94,7 @@ class IpToDomainsVirusTotal(Enricher):
     ) -> List[OutputType]:
         if not self._graph_service:
             return results
-        for domain, ip, observed, source in self._pairs:
+        for domain, ip, observed, source, evidence in self._pairs:
             self.create_node(domain)
             self.create_node(ip)
             self.create_relationship(
@@ -96,6 +104,7 @@ class IpToDomainsVirusTotal(Enricher):
                 observed_at=observed,
                 source_ref=source,
                 provider="VirusTotal",
+                provider_evidence=evidence,
             )
             self.log_graph_message(
                 f"IpToDomainsVirusTotal: {domain.domain} -> {ip.address} (passive DNS, observed {observed or 'unknown'})"

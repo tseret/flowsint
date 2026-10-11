@@ -1,12 +1,12 @@
 import os
 from typing import Any, Dict, List, Optional
 
-import requests
-
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
 from flowsint_enrichers.file.to_malwarebazaar import file_hash, fill_file
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA
 from flowsint_enrichers.registry import flowsint_enricher
+from flowsint_enrichers.virustotal import request_json
 from flowsint_types.file import File
 
 
@@ -20,12 +20,13 @@ class FileToVirusTotal(Enricher):
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
         return [
+            REFRESH_SCHEMA.copy(),
             {
                 "name": "VT_API_KEY",
                 "type": "vaultSecret",
                 "description": "The VirusTotal API key.",
                 "required": True,
-            }
+            },
         ]
 
     @classmethod
@@ -56,43 +57,14 @@ class FileToVirusTotal(Enricher):
                     },
                 )
                 continue
-            try:
-                response = requests.get(
-                    f"https://www.virustotal.com/api/v3/files/{sha}",
-                    headers={"x-apikey": api_key},
-                    timeout=30,
-                )
-                if response.status_code == 404:
-                    Logger.info(
-                        self.sketch_id,
-                        {"message": f"(FileToVirusTotal) '{sha}' not found."},
-                    )
-                    continue
-                if response.status_code == 429:
-                    Logger.error(
-                        self.sketch_id,
-                        {
-                            "message": "(FileToVirusTotal) VirusTotal quota exceeded (429); stopping."
-                        },
-                    )
+            payload = request_json(
+                self, f"https://www.virustotal.com/api/v3/files/{sha}", str(api_key)
+            )
+            if payload is None:
+                if getattr(self, "_vt_stop", False):
                     break
-                if response.status_code != 200:
-                    Logger.error(
-                        self.sketch_id,
-                        {
-                            "message": f"(FileToVirusTotal) VirusTotal returned HTTP {response.status_code} for '{sha}'."
-                        },
-                    )
-                    continue
-                attrs = response.json().get("data", {}).get("attributes", {})
-            except Exception as e:
-                Logger.error(
-                    self.sketch_id,
-                    {
-                        "message": f"(FileToVirusTotal) Exception while querying {sha}: {e}"
-                    },
-                )
                 continue
+            attrs = payload.get("data", {}).get("attributes", {})
 
             stats = attrs.get("last_analysis_stats") or {}
             malicious = int(stats.get("malicious") or 0)

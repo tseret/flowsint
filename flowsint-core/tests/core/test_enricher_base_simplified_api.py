@@ -229,3 +229,128 @@ async def test_invalid_params_identify_missing_field_without_logging_resolved_se
         await enricher.async_init()
 
     assert "sensitive-api-key" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_failure_after_automatic_batch_commit_reports_saved_graph():
+    from unittest.mock import MagicMock
+
+    from flowsint_core.core.graph.repository import Neo4jGraphRepository
+    from flowsint_core.core.graph.service import GraphService
+
+    connection = MagicMock()
+    repository = Neo4jGraphRepository(connection)
+    checkpoints = []
+    repository.on_commit = checkpoints.append
+    graph = GraphService("test", repository, enable_batching=True)
+
+    class LateFailure(MockEnricher):
+        async def scan(self, values):
+            for index in range(101):
+                self.create_node(Domain(domain=f"node-{index}.example.com"))
+            raise RuntimeError("Provider failed after the first committed batch")
+
+    enricher = LateFailure(graph_service=graph)
+    assert await enricher.execute([]) == []
+    assert enricher.execution_summary["outcome"] == "partial"
+    assert enricher.execution_summary["committed_graph_operations"] == 100
+    assert checkpoints == [100]
+    connection.execute_batch.assert_called_once()
+    assert repository._batch_operations == []
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_is_not_counted_as_committed():
+    from unittest.mock import MagicMock
+
+    from flowsint_core.core.graph.repository import Neo4jGraphRepository
+    from flowsint_core.core.graph.service import GraphService
+
+    connection = MagicMock()
+    connection.execute_batch.side_effect = RuntimeError("Transaction rolled back")
+    repository = Neo4jGraphRepository(connection)
+    graph = GraphService("test", repository, enable_batching=True)
+
+    class FailedWrite(MockEnricher):
+        async def scan(self, values):
+            self.create_node(Domain(domain="example.com"))
+            return values
+
+    enricher = FailedWrite(graph_service=graph)
+    assert await enricher.execute([]) == []
+    assert enricher.execution_summary["outcome"] == "failed"
+    assert enricher.execution_summary["committed_graph_operations"] == 0
+
+
+def test_relationship_snapshots_safe_facts_before_target_changes():
+    from unittest.mock import MagicMock
+
+    from flowsint_types.ip import Ip
+    from flowsint_types.port import Port
+    from flowsint_types.ssl_certificate import SSLCertificate
+
+    graph = MagicMock()
+    enricher = MockEnricher(graph_service=graph)
+    source = Ip(address="192.0.2.1")
+    port = Port(
+        number=0,
+        protocol="tcp",
+        service="nginx",
+        state="open",
+        fingerprints={
+            "banner_hash": 0,
+            "tls_sha256": "a" * 64,
+            "api_key": "secret",
+            "html_hash": "x" * 513,
+        },
+        banner="sensitive banner",
+        password="secret",
+    )
+    enricher.create_relationship(source, port)
+    observation = graph.create_relationship.call_args.kwargs["observation"]
+    port.service = "changed"
+    port.fingerprints["tls_sha256"] = "changed"
+    assert observation["facts"] == {
+        "number": 0,
+        "protocol": "tcp",
+        "service": "nginx",
+        "status": "open",
+        "fingerprints": {"banner_hash": 0, "tls_sha256": "a" * 64},
+    }
+    certificate = SSLCertificate(
+        subject="example.com", is_valid=False, fingerprint_sha256="b" * 64
+    )
+    enricher.create_relationship(source, certificate)
+    facts = graph.create_relationship.call_args.kwargs["observation"]["facts"]
+    assert facts["is_valid"] is False
+    assert facts["fingerprints"] == {"certificate_sha256": "b" * 64}
+
+
+def test_cached_relationship_retains_original_retrieval_and_response_association():
+    from unittest.mock import MagicMock
+
+    from flowsint_types.port import Port
+
+    graph = MagicMock()
+    enricher = MockEnricher(graph_service=graph, scan_id="current-scan")
+    original = {
+        "fetched_at": "2026-01-01T12:00:00Z",
+        "source_scan_id": "first-scan",
+        "request_id": "request-one",
+        "cache_hit": True,
+        "secret": "hidden",
+    }
+    enricher.provider_evidence = [original, {"fetched_at": "2026-02-01T12:00:00Z"}]
+    enricher.create_relationship(
+        Domain(domain="example.com"), Port(number=443), provider_evidence=original
+    )
+    observation = graph.create_relationship.call_args.kwargs["observation"]
+    assert observation["retrieved_at"] == original["fetched_at"]
+    assert observation["source_scan_id"] == "first-scan"
+    assert observation["scan_id"] == "current-scan"
+    assert observation["cache_hit"] is True
+    assert "secret" not in observation
+    enricher.create_relationship(Domain(domain="example.com"), Port(number=80))
+    ambiguous = graph.create_relationship.call_args.kwargs["observation"]
+    assert "source_scan_id" not in ambiguous
+    assert "cache_hit" not in ambiguous

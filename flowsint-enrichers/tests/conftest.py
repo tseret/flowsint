@@ -11,6 +11,7 @@ def setup_test_environment(monkeypatch):
     at construction, but driver creation is lazy — nothing connects.
     Without these, tests silently depend on the developer's local .env.
     """
+    monkeypatch.setattr("flowsint_enrichers.provider_http._redis", lambda: None)
     monkeypatch.setenv("NEO4J_URI_BOLT", "bolt://127.0.0.1:7687")
     monkeypatch.setenv("NEO4J_USERNAME", "neo4j")
     monkeypatch.setenv("NEO4J_PASSWORD", "test-password")

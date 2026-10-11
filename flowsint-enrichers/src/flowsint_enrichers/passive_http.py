@@ -9,6 +9,12 @@ from flowsint_core.core.enricher_base import Enricher
 
 
 def indexed_json(enricher: Enricher, url: str, params: dict) -> Any:
+    count = getattr(enricher, "provider_request_count", 0)
+    limit = getattr(enricher, "provider_request_limit", None)
+    if limit is not None and count >= limit:
+        enricher.report_issue("partial", "Indexed source request budget exhausted.")
+        return None
+    enricher.provider_request_count = count + 1
     try:
         with requests.get(
             url, params=params, timeout=(10, 30), stream=True, allow_redirects=False

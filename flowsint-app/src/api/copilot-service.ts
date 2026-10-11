@@ -10,7 +10,17 @@ export type AgentStep = {
   provider_block_reason?: string | null
   outcome: string
   output_count?: number
+  provider_request_count?: number
+  new_entity_count?: number
   errors?: { message: string }[]
+}
+export type InvestigationPolicy = {
+  permitted_domains: string[]
+  permitted_cidrs: string[]
+  excluded_entities: string[]
+  max_pivot_depth: number
+  max_provider_requests: number
+  max_graph_growth: number
 }
 export type AgentRun = {
   id: string
@@ -27,6 +37,7 @@ export type AgentRun = {
     | 'cancelled'
     | 'undone'
   max_steps: number
+  policy?: InvestigationPolicy | null
   steps: AgentStep[]
   report: string | null
   finding_ids: string[]
@@ -125,6 +136,7 @@ export const copilotService = {
     node_ids: string[]
     objective: string
     max_steps: number
+    policy?: InvestigationPolicy
   }): Promise<AgentRun> =>
     fetchWithAuth('/api/copilot/agent', { method: 'POST', body: JSON.stringify(body) }),
   latestAgentRun: (sketchId: string): Promise<AgentRun | null> =>
@@ -132,6 +144,8 @@ export const copilotService = {
   getAgentRun: (id: string): Promise<AgentRun> => fetchWithAuth(`/api/copilot/agent/${id}`),
   retryReport: (id: string): Promise<AgentRun> =>
     fetchWithAuth(`/api/copilot/agent/${id}/retry-report`, { method: 'POST' }),
+  resumeAgent: (id: string): Promise<AgentRun> =>
+    fetchWithAuth(`/api/copilot/agent/${id}/resume`, { method: 'POST' }),
   cancelAgent: (id: string): Promise<AgentRun> =>
     fetchWithAuth(`/api/copilot/agent/${id}/cancel`, { method: 'POST' }),
   undoAgent: (

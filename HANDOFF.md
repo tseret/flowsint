@@ -416,3 +416,16 @@ Done:
 
 Next:
 - Review locally and in the same draft PR; team deployment and merge remain unperformed.
+
+## 2026-10-11 — enricher and copilot reliability
+Done:
+- Confirmed graph-operation checkpoints and explicit partial/interrupted outcomes; PostgreSQL task leases prevent duplicate standard/template enrichment. Cross-database commit uncertainty is retained rather than reporting false zero results or repeating provider calls.
+- Shared credential-scoped Redis cooldowns and successful-response cache for VirusTotal/Shodan, bounded retries with jitter, streamed response caps, refresh control, and exact cached-response provenance on relationships. Indexed CT/RIPE requests also enforce their request budgets.
+- Persisted copilot domain/CIDR/exclusion/depth/request/growth policy, reviewed bounded capabilities, saved dispatch IDs, recovery, and an output frontier independent of the initial graph slice. Timed-out or uncertain scans stop further collection. Legacy runs without recorded budgets support report retry but cannot resume collection.
+- Specific observation references and entity/scan alignment checks for findings; immutable fact snapshots feed bounded local shared-fingerprint, recorded-change and simultaneous-provider-conflict summaries. Evidence cards show cached origin and partial-commit details.
+- Full Python suite passed 984 tests/5 skipped, with two additional regressions passing afterwards (frontier and legacy resume). Frontend 94 tests pass. Ruff/Prettier and ESLint pass (127 existing warnings); changed backend source mypy passes. Full frontend TypeScript retains unrelated pre-existing errors.
+- Existing local stack rebuilt sequentially as workspace-reliability-20261011. Additive migration 20261011_agent_policy applied. Real PostgreSQL lease and Redis cache/cooldown smoke passed with mocked HTTP and synthetic keys removed; no external calls. Browser checked scope controls and preserved subscription model GPT-6.1 Sol/medium.
+
+Next:
+- Review localhost and draft PR https://github.com/tseret/flowsint/pull/1. No merge/team deployment.
+- Fresh provider/model investigations and destructive worker-kill testing were not run. Replay tests cover dispatch interruption; snapshots are prospective, and citation validation checks evidence references, not semantic truth. Configured Redis outages stop coordinated provider lookups; waits over five seconds report partial. Graph-growth accounting is conservative.

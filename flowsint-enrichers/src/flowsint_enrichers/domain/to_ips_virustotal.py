@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from flowsint_core.core.enricher_base import Enricher
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_enrichers.virustotal import (
     KEY_SCHEMA,
@@ -22,7 +23,7 @@ class DomainToIpsVirusTotal(Enricher):
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
-        return [KEY_SCHEMA.copy(), PAGE_SCHEMA.copy()]
+        return [REFRESH_SCHEMA.copy(), KEY_SCHEMA.copy(), PAGE_SCHEMA.copy()]
 
     @classmethod
     def name(cls) -> str:
@@ -53,7 +54,9 @@ class DomainToIpsVirusTotal(Enricher):
                     continue
                 domain, ip = item, output
                 source = (row.get("links") or {}).get("self") or url
-                self._pairs.append((domain, ip, observed, source))
+                self._pairs.append(
+                    (domain, ip, observed, source, row.get("_provider_evidence"))
+                )
                 if value not in seen:
                     seen.add(value)
                     results.append(output)
@@ -66,7 +69,7 @@ class DomainToIpsVirusTotal(Enricher):
     ) -> List[OutputType]:
         if not self._graph_service:
             return results
-        for domain, ip, observed, source in self._pairs:
+        for domain, ip, observed, source, evidence in self._pairs:
             self.create_node(domain)
             self.create_node(ip)
             self.create_relationship(
@@ -76,6 +79,7 @@ class DomainToIpsVirusTotal(Enricher):
                 observed_at=observed,
                 source_ref=source,
                 provider="VirusTotal",
+                provider_evidence=evidence,
             )
             self.log_graph_message(
                 f"DomainToIpsVirusTotal: {domain.domain} -> {ip.address} (passive DNS, observed {observed or 'unknown'})"

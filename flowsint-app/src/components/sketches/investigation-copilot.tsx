@@ -36,6 +36,12 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const [open, setOpen] = useState(false)
   const [objective, setObjective] = useState('')
   const [maxSteps, setMaxSteps] = useState(20)
+  const [permittedDomains, setPermittedDomains] = useState('')
+  const [permittedCidrs, setPermittedCidrs] = useState('')
+  const [excludedEntities, setExcludedEntities] = useState('')
+  const [maxDepth, setMaxDepth] = useState(2)
+  const [maxRequests, setMaxRequests] = useState(20)
+  const [maxGrowth, setMaxGrowth] = useState(500)
   const nodes = useGraphStore((s) => s.nodesMapping)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -88,7 +94,15 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
         sketch_id: sketchId,
         node_ids: ids,
         objective: objective.trim(),
-        max_steps: maxSteps
+        max_steps: maxSteps,
+        policy: {
+          permitted_domains: permittedDomains.split(/[\s,]+/).filter(Boolean),
+          permitted_cidrs: permittedCidrs.split(/[\s,]+/).filter(Boolean),
+          excluded_entities: excludedEntities.split(/[\s,]+/).filter(Boolean),
+          max_pivot_depth: maxDepth,
+          max_provider_requests: maxRequests,
+          max_graph_growth: maxGrowth
+        }
       })
       queryClient.setQueryData(['copilot', 'agent', created.id], created)
       queryClient.setQueryData(latestKey, created)
@@ -109,6 +123,21 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
       queryClient.setQueryData(latestKey, updated)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to retry the report')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resume() {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await copilotService.resumeAgent(run.id)
+      queryClient.setQueryData(['copilot', 'agent', run.id], updated)
+      queryClient.setQueryData(latestKey, updated)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to resume the agent')
     } finally {
       setBusy(false)
     }
@@ -203,6 +232,74 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                     onChange={(e) => setMaxSteps(Math.min(50, Math.max(1, Number(e.target.value))))}
                   />
                 </label>
+                <details className="space-y-3 rounded border p-3">
+                  <summary className="cursor-pointer text-sm">Scope and budgets</summary>
+                  <p className="text-xs text-muted-foreground">
+                    Empty scope lists allow passive pivots from selected seeds within the depth
+                    limit. Enter domains or CIDRs to restrict lookup targets. Evidence may mention
+                    entities outside that scope.
+                  </p>
+                  <label className="block text-sm">
+                    Permitted domains
+                    <Input
+                      value={permittedDomains}
+                      disabled={busy}
+                      onChange={(e) => setPermittedDomains(e.target.value)}
+                      placeholder="example.org"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Permitted CIDRs
+                    <Input
+                      value={permittedCidrs}
+                      disabled={busy}
+                      onChange={(e) => setPermittedCidrs(e.target.value)}
+                      placeholder="192.0.2.0/24"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Excluded entities
+                    <Input
+                      value={excludedEntities}
+                      disabled={busy}
+                      onChange={(e) => setExcludedEntities(e.target.value)}
+                      placeholder="Entity IDs, domains or IPs"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Maximum pivot depth
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={maxDepth}
+                      disabled={busy}
+                      onChange={(e) => setMaxDepth(Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Maximum provider requests
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={maxRequests}
+                      disabled={busy}
+                      onChange={(e) => setMaxRequests(Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Maximum new entities
+                    <Input
+                      type="number"
+                      min={1}
+                      max={2000}
+                      value={maxGrowth}
+                      disabled={busy}
+                      onChange={(e) => setMaxGrowth(Number(e.target.value))}
+                    />
+                  </label>
+                </details>
                 <Button
                   onClick={start}
                   disabled={
@@ -247,6 +344,12 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
               <section className="space-y-3 border-t pt-4" aria-live="polite">
                 <h3 className="font-medium">Objective</h3>
                 <p className="text-sm whitespace-pre-wrap">{run.objective}</p>
+                {run.policy && (
+                  <p className="text-xs text-muted-foreground">
+                    Limits: depth {run.policy.max_pivot_depth} · {run.policy.max_provider_requests}{' '}
+                    provider requests · {run.policy.max_graph_growth} new entities
+                  </p>
+                )}
                 <p className="text-sm">
                   {run.status === 'running' && !run.started_at
                     ? 'Waiting for an agent worker. The run starts when one is available.'
@@ -279,6 +382,16 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                     disabled={!canEdit || busy || !subscribed}
                   >
                     Retry report from saved evidence
+                  </Button>
+                )}
+                {run.status === 'failed' && run.policy && !run.finding_ids.length && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={resume}
+                    disabled={!canEdit || busy || !subscribed}
+                  >
+                    Resume collection from saved steps
                   </Button>
                 )}
                 {UNDOABLE.includes(run.status) && (

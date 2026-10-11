@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -9,7 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from flowsint_core.core.graph.types import GraphData, GraphNode, NodeMetadata
+from flowsint_core.core.graph.types import GraphData, GraphEdge, GraphNode, NodeMetadata
 from flowsint_core.core.llm.protocol import SubscriptionError
 from flowsint_core.core.models import (
     AgentRun,
@@ -75,19 +76,22 @@ def env(db_session, monkeypatch):
     )
     chat = MagicMock()
     chat.get_subscription_provider.side_effect = lambda owner_id: state.provider
+    monkeypatch.setattr(agent, "task_lease", lambda *args: nullcontext(True))
     monkeypatch.setattr(agent, "SessionLocal", lambda: db_session)
     monkeypatch.setattr(agent, "create_chat_service", lambda db: chat)
     monkeypatch.setattr(agent, "create_type_registry_service", MagicMock())
     monkeypatch.setattr(
         agent,
         "create_graph_service",
-        lambda **kw: SimpleNamespace(get_graph_slice=lambda **kw: state.graph),
+        lambda **kw: SimpleNamespace(
+            get_graph_slice=lambda **kw: state.graph, query=lambda *args: []
+        ),
     )
     monkeypatch.setattr(
         agent.ENRICHER_REGISTRY,
         "list",
         lambda: [
-            {"name": "domain_to_whois", "inputs": {"type": "Domain"}},
+            {"name": "domain_to_root_domain", "inputs": {"type": "Domain"}},
             {"name": "domain_to_root_domain", "inputs": {"type": "Domain"}},
             {"name": "domain_to_dns", "inputs": {"type": "Domain"}},
         ],
@@ -95,19 +99,34 @@ def env(db_session, monkeypatch):
     monkeypatch.setattr(agent, "Logger", MagicMock())
     monkeypatch.setattr(agent, "POLL_S", 0)
 
-    def send_task(name, args, kwargs):
-        scan_id = uuid4()
+    sketch_id = sketch.id
+
+    def send_task(name, args, kwargs, task_id):
+        scan_id = UUID(task_id)
+        saved = db_session.get(AgentRun, state.run_id)
+        assert saved.steps[-1]["scan_id"] == task_id
+        assert saved.steps[-1]["outcome"] in {"queued", "running", "timeout"}
         state.dispatched.append((name, args[0]))
         db_session.add(
             Scan(
                 id=scan_id,
-                sketch_id=sketch.id,
+                sketch_id=sketch_id,
                 status=state.scan_status,
                 summary={"outcome": "results", "output_count": 2, "errors": []},
                 details=[{"registrar": "Example"}],
             )
         )
         db_session.commit()
+        if state.scan_status == "COMPLETED":
+            state.graph.edges = [
+                GraphEdge(
+                    id="self",
+                    source="seed",
+                    target="seed",
+                    label="REGISTERED",
+                    observations=[{"scan_id": str(scan_id), "provider": "Example"}],
+                )
+            ]
         if state.on_dispatch:
             state.on_dispatch()
         return SimpleNamespace(id=str(scan_id))
@@ -148,7 +167,7 @@ ENRICH = json.dumps(
     {
         "thought": "t",
         "action": "enrich",
-        "enricher": "domain_to_whois",
+        "enricher": "domain_to_root_domain",
         "node_ids": ["seed"],
     }
 )
@@ -157,16 +176,18 @@ FINISH = json.dumps({"action": "finish"})
 
 def _report(env, cite: str | None = None) -> str:
     scan = cite or env.session.query(Scan).first().id
+    observation = agent.graph_observation(env.graph, {"seed"}, set())["observations"]
+    observation_id = observation[0]["id"] if observation else "pending"
     return json.dumps(
         {
-            "report": f"Registered via Example [scan:{scan}].",
+            "report": f"Registered via Example [scan:{scan}] [observation:{observation_id}].",
             "findings": [
                 {
                     "body": "Registrar is Example",
                     "scan_ids": [str(scan)],
+                    "observation_ids": [observation_id],
                     "target_node_id": "seed",
                 },
-                {"body": "Foreign", "scan_ids": [str(uuid4())]},
             ],
         }
     )
@@ -187,10 +208,10 @@ def test_agent_runs_passive_steps_then_publishes_cited_draft_findings(env):
 
     assert run.status == "completed", run.error
     assert run.started_at is not None
-    assert env.dispatched == [("run_enricher", "domain_to_whois")]
+    assert env.dispatched == [("run_enricher", "domain_to_root_domain")]
     assert [
         (s["step"], s["enricher"], s["outcome"], s["output_count"]) for s in run.steps
-    ] == [(1, "domain_to_whois", "results", 2)]
+    ] == [(1, "domain_to_root_domain", "results", 2)]
     assert run.report.startswith("Registered via Example [scan:")
     item = env.session.query(CaseItem).one()
     assert (item.kind, item.decision, item.target_id) == ("finding", "pending", "seed")
@@ -296,7 +317,7 @@ def test_report_timeout_retries_then_preserves_summary_for_report_only_recovery(
     )
     run = env.session.get(AgentRun, env.run_id, populate_existing=True)
     assert run.status == "completed", run.error
-    assert env.dispatched == [("run_enricher", "domain_to_whois")]
+    assert env.dispatched == [("run_enricher", "domain_to_root_domain")]
     assert env.provider.calls == 1
 
 
@@ -306,7 +327,7 @@ def test_provider_quota_blocks_all_lookups_using_same_key(env, monkeypatch):
         "list",
         lambda: [
             {
-                "name": "domain_to_whois",
+                "name": "domain_to_root_domain",
                 "inputs": {"type": "Domain"},
                 "provider": "registry",
             },
@@ -331,3 +352,139 @@ def test_provider_quota_blocks_all_lookups_using_same_key(env, monkeypatch):
     assert len(env.dispatched) == 1
     assert run.steps[0]["provider_block_reason"]
     assert run.steps[0]["provider_ids"] == ["registry"]
+
+
+def test_duplicate_worker_lease_does_not_call_model_or_dispatch(env, monkeypatch):
+    env.start()
+    monkeypatch.setattr(agent, "task_lease", lambda *args: nullcontext(False))
+    run = _execute(env)
+    assert run.status == "running"
+    assert env.provider.calls == 0
+    assert env.dispatched == []
+
+
+def test_interrupted_dispatch_resumes_saved_task_id_without_new_decision(
+    env, monkeypatch
+):
+    env.start(max_steps=1)
+    env.provider = Provider([ENRICH])
+    original = agent.celery.send_task
+    attempted = []
+
+    class WorkerLost(BaseException):
+        pass
+
+    def lose_worker(name, args, kwargs, task_id):
+        saved = env.session.get(AgentRun, env.run_id)
+        assert saved.steps[-1]["scan_id"] == task_id
+        assert saved.steps[-1]["objects"]
+        attempted.append(task_id)
+        raise WorkerLost()
+
+    monkeypatch.setattr(agent.celery, "send_task", lose_worker)
+    with pytest.raises(WorkerLost):
+        _execute(env)
+    run = env.session.get(AgentRun, env.run_id)
+    assert run.status == "running"
+    assert run.steps[0]["outcome"] == "queued"
+    monkeypatch.setattr(agent.celery, "send_task", original)
+    env.provider = Provider([lambda: _report(env)])
+    run = _execute(env)
+    assert run.status == "completed", (run.error, agent.Logger.error.call_args_list)
+    assert run.steps[0]["scan_id"] == attempted[0]
+    assert len(run.steps) == 1
+    assert env.provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"permitted_domains": ["other.example"]},
+        {"excluded_entities": ["seed"]},
+    ],
+)
+def test_scope_rejection_prevents_dispatch(env, policy):
+    run = env.start()
+    run.policy = policy
+    env.session.commit()
+    env.provider = Provider(
+        [
+            json.dumps({"report": "No lookup was permitted.", "findings": []}),
+        ]
+    )
+    run = _execute(env)
+    assert run.status == "completed", run.error
+    assert env.dispatched == []
+    assert env.provider.calls == 1
+
+
+def test_provider_budget_rejection_prevents_dispatch(env, monkeypatch):
+    monkeypatch.setattr(
+        agent.ENRICHER_REGISTRY,
+        "list",
+        lambda: [{"name": "domain_to_certificates_ct", "inputs": {"type": "Domain"}}],
+    )
+    run = env.start()
+    run.policy = {"max_provider_requests": 0}
+    env.session.commit()
+    decision = json.dumps(
+        {
+            "action": "enrich",
+            "enricher": "domain_to_certificates_ct",
+            "node_ids": ["seed"],
+        }
+    )
+    env.provider = Provider(
+        [
+            decision,
+            decision,
+            decision,
+            json.dumps({"report": "Request budget permits no calls.", "findings": []}),
+        ]
+    )
+    run = _execute(env)
+    assert run.status == "completed", run.error
+    assert env.dispatched == []
+
+
+def test_frontier_includes_scan_outputs_beyond_loaded_slice_and_filters_scope(env):
+    run = env.start()
+    run.policy = {"permitted_domains": ["example.org"], "max_pivot_depth": 1}
+    frontier = {"seed": 0}
+    graph = SimpleNamespace(
+        query=MagicMock(
+            return_value=[
+                {
+                    "id": "outside-loaded-slice",
+                    "scan_id": "scan-1",
+                    "nodeType": "domain",
+                    "nodeLabel": "new.example.org",
+                },
+                {
+                    "id": "outside-scope",
+                    "scan_id": "scan-1",
+                    "nodeType": "domain",
+                    "nodeLabel": "unrelated.org",
+                },
+            ]
+        )
+    )
+    agent._refresh_frontier(
+        graph, run, [{"scan_id": "scan-1", "node_ids": ["seed"]}], frontier
+    )
+    assert frontier == {"seed": 0, "outside-loaded-slice": 1}
+    graph.query.return_value = [
+        {
+            "id": "too-deep",
+            "scan_id": "scan-2",
+            "nodeType": "domain",
+            "nodeLabel": "deep.example.org",
+        }
+    ]
+    agent._refresh_frontier(
+        graph,
+        run,
+        [{"scan_id": "scan-2", "node_ids": ["outside-loaded-slice"]}],
+        frontier,
+    )
+    assert "too-deep" not in frontier

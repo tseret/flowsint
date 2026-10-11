@@ -14,6 +14,17 @@ export type RunSummary = {
   provider?: string
   enricher?: string
   scan_id: string
+  provider_evidence?: {
+    provider: string
+    request_id: string
+    fetched_at: string
+    source_scan_id: string
+    cache_hit: boolean
+  }[]
+  provider_request_count?: number
+  committed_graph_operations?: number
+  interrupted?: boolean
+  graph_commit_uncertain?: boolean
 }
 export type Scan = {
   id: string

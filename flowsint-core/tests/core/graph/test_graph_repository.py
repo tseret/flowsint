@@ -967,3 +967,45 @@ def test_legacy_identity_uses_neo4j_compatible_values():
         "sketch",
     )
     assert params["legacy_identity"] == {"nodeProperties.network": "1.2.3.0/24"}
+
+
+def test_growth_budget_stops_before_queuing_extra_new_entity():
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    connection.query.side_effect = [[{"existing": True}], [], []]
+    repository = Neo4jGraphRepository(connection)
+    repository.max_new_entities = 1
+
+    def node(key):
+        return {"nodeKey": key, "nodeLabel": key, "nodeType": "domain"}
+
+    repository.add_to_batch("node", node_obj=node("existing"), sketch_id="s")
+    repository.add_to_batch("node", node_obj=node("new"), sketch_id="s")
+    repository.add_to_batch("node", node_obj=node("new"), sketch_id="s")
+    with pytest.raises(ValueError, match="growth budget"):
+        repository.add_to_batch("node", node_obj=node("excess"), sketch_id="s")
+    assert repository.new_entity_count == 1
+    assert len(repository._batch_operations) == 3
+
+
+def test_growth_budget_uses_label_identity_when_node_key_is_absent():
+    connection = MagicMock()
+    connection.query.return_value = []
+    repository = Neo4jGraphRepository(connection)
+    repository.max_new_entities = 1
+    repository.add_to_batch(
+        "node",
+        node_obj={"nodeLabel": "first.example", "nodeType": "domain"},
+        sketch_id="s",
+    )
+    with pytest.raises(ValueError, match="growth budget"):
+        repository.add_to_batch(
+            "node",
+            node_obj={"nodeLabel": "second.example", "nodeType": "domain"},
+            sketch_id="s",
+        )
+    assert repository.new_entity_count == 1
+    assert len(repository._batch_operations) == 1
+    assert connection.query.call_args_list[0].args[1]["node_key"] == "first.example"
+    assert connection.query.call_args_list[1].args[1]["node_key"] == "second.example"

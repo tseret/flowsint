@@ -11,12 +11,77 @@ from flowsint_types import FlowsintType
 from ..utils import resolve_type
 from .enums import EventLevel
 from .graph import GraphService, create_graph_service
+from .graph.repository import Neo4jGraphRepository
 from .logger import Logger, enrichment_errors
 from .vault import VaultProtocol
 
 
 class InvalidEnricherParams(Exception):
     pass
+
+
+def _observation_facts(entity: BaseModel) -> Dict[str, Any]:
+    fields = {
+        "port": ("host", "number", "protocol", "service", "version", "state"),
+        "sslcertificate": (
+            "subject",
+            "issuer",
+            "serial_number",
+            "valid_from",
+            "valid_until",
+            "is_valid",
+            "is_expired",
+            "is_self_signed",
+            "is_wildcard",
+        ),
+        "ip": ("address", "isp", "asn", "organization", "prefix", "country"),
+    }.get(type(entity).__name__.lower(), ())
+    facts: Dict[str, Any] = {}
+    for field in fields:
+        value = getattr(entity, field, None)
+        if (
+            type(value) in (bool, int)
+            or isinstance(value, str)
+            and 0 < len(value) <= 512
+        ):
+            facts["status" if field == "state" else field] = value
+    allowed_fingerprints = (
+        "banner_hash",
+        "html_hash",
+        "favicon_hash",
+        "tls_sha256",
+        "jarm",
+        "ja3s",
+        "banner_sha256",
+        "banner_sha1",
+        "banner_mmh3",
+        "http.body_sha256",
+        "http.body_sha1",
+        "http.body_mmh3",
+        "http.headers_sha256",
+        "tls.fingerprint_sha256",
+        "tls.fingerprint_sha1",
+        "tls.ja3s",
+        "tls.ja4s",
+        "tls.ja4scan_tls",
+        "tls.ja4x",
+        "tls.jarm",
+    )
+    fingerprints: Dict[str, Any] = {}
+    source = getattr(entity, "fingerprints", None)
+    if fields and isinstance(source, dict):
+        for field in allowed_fingerprints:
+            value = source.get(field)
+            if type(value) is int or isinstance(value, str) and 0 < len(value) <= 512:
+                fingerprints[field] = value
+    if type(entity).__name__.lower() == "sslcertificate":
+        for algorithm in ("sha256", "sha1"):
+            value = getattr(entity, f"fingerprint_{algorithm}", None)
+            if isinstance(value, str) and 0 < len(value) <= 512:
+                fingerprints[f"certificate_{algorithm}"] = value
+    if fingerprints:
+        facts["fingerprints"] = dict(list(fingerprints.items())[:20])
+    return facts
 
 
 def build_params_model(params_schema: list) -> Type[BaseModel]:
@@ -515,8 +580,16 @@ class Enricher(ABC):
                     issue_outcome = "missing_credentials"
                 self.report_issue(issue_outcome, message)
             outcome = "results" if processed else "no_matches"
+            repository = self._graph_service.repository
+            committed = (
+                repository.committed_operations
+                if isinstance(repository, Neo4jGraphRepository)
+                else 0
+            )
             if self._issues:
-                outcome = "partial" if processed else self._issues[0]["outcome"]
+                outcome = (
+                    "partial" if processed or committed else self._issues[0]["outcome"]
+                )
             self.execution_summary = {
                 "outcome": outcome,
                 "provider": self.name(),
@@ -524,6 +597,12 @@ class Enricher(ABC):
                 "scan_id": self.scan_id,
                 "input_count": len(values),
                 "output_count": len(processed),
+                "committed_graph_operations": committed,
+                "new_entity_count": repository.new_entity_count
+                if isinstance(repository, Neo4jGraphRepository)
+                else 0,
+                "provider_request_count": getattr(self, "provider_request_count", 0),
+                "provider_evidence": getattr(self, "provider_evidence", []),
                 "duration_ms": round((monotonic() - started) * 1000),
                 "errors": self._issues.copy(),
             }
@@ -581,6 +660,7 @@ class Enricher(ABC):
         observed_at: Optional[str] = None,
         source_ref: Optional[str] = None,
         provider: Optional[str] = None,
+        provider_evidence: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Create a relationship between two nodes, matched by type and label.
@@ -595,18 +675,30 @@ class Enricher(ABC):
             to_obj: FlowsintType instance (target)
             rel_label: Relationship type (e.g. "HAS_DOMAIN")
         """
+        observation: Dict[str, Any] = {
+            "provider": provider or self.name(),
+            "enricher": self.name(),
+            "scan_id": self.scan_id,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": observed_at,
+            "source_ref": source_ref,
+            "facts": _observation_facts(to_obj),
+        }
+        requests = getattr(self, "provider_evidence", [])
+        # Postprocess may combine several lookups; only explicit association or
+        # a single response can identify the observation's original retrieval.
+        evidence = provider_evidence or (requests[0] if len(requests) == 1 else {})
+        for field in ("fetched_at", "source_scan_id", "request_id"):
+            value = evidence.get(field)
+            if isinstance(value, str) and 0 < len(value) <= 128:
+                observation["retrieved_at" if field == "fetched_at" else field] = value
+        if type(evidence.get("cache_hit")) is bool:
+            observation["cache_hit"] = evidence["cache_hit"]
         self._graph_service.create_relationship(
             from_obj=from_obj,
             to_obj=to_obj,
             rel_label=rel_label,
-            observation={
-                "provider": provider or self.name(),
-                "enricher": self.name(),
-                "scan_id": self.scan_id,
-                "retrieved_at": datetime.now(timezone.utc).isoformat(),
-                "observed_at": observed_at,
-                "source_ref": source_ref,
-            },
+            observation=observation,
         )
 
     def log_graph_message(self, message: str) -> None:

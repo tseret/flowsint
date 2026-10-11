@@ -1,12 +1,26 @@
 """Tests that the enricher Celery tasks forward launch params downstream."""
 
 import uuid
+from contextlib import nullcontext
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import pytest
 
 from flowsint_core.tasks import enricher as enricher_task
+
+
+@pytest.fixture(autouse=True)
+def mocked_lease(monkeypatch):
+    monkeypatch.setattr(
+        enricher_task, "task_lease", lambda session, task_id: nullcontext(True)
+    )
+
+
+def fresh_session():
+    session = MagicMock()
+    session.get.return_value = None
+    return session
 
 
 class RecordingEnricher:
@@ -19,7 +33,9 @@ class RecordingEnricher:
 @pytest.fixture
 def captured_kwargs(monkeypatch):
     """Neutralise the task's DB and vault work, capture the enricher kwargs."""
-    monkeypatch.setattr(enricher_task, "SessionLocal", MagicMock())
+    monkeypatch.setattr(
+        enricher_task, "SessionLocal", MagicMock(return_value=fresh_session())
+    )
     monkeypatch.setattr(enricher_task, "create_vault_service", MagicMock())
 
     captured: Dict[str, Any] = {}
@@ -59,7 +75,9 @@ def test_run_enricher_without_params_passes_an_empty_dict(captured_kwargs):
 
 
 def test_run_template_enricher_forwards_params_to_the_template_enricher(monkeypatch):
-    monkeypatch.setattr(enricher_task, "SessionLocal", MagicMock())
+    monkeypatch.setattr(
+        enricher_task, "SessionLocal", MagicMock(return_value=fresh_session())
+    )
     monkeypatch.setattr(enricher_task, "create_vault_service", MagicMock())
 
     db_template = MagicMock()
@@ -98,7 +116,7 @@ def test_run_template_enricher_forwards_params_to_the_template_enricher(monkeypa
 def test_task_does_not_mark_recorded_provider_failure_completed(monkeypatch):
     from flowsint_core.core.enums import EventLevel
 
-    session = MagicMock()
+    session = fresh_session()
     monkeypatch.setattr(enricher_task, "SessionLocal", lambda: session)
     monkeypatch.setattr(
         enricher_task.ENRICHER_REGISTRY, "enricher_exists", lambda name: True
@@ -143,7 +161,7 @@ def test_terminal_status_is_published_after_summary_commit(
 ):
     from flowsint_core.core.enums import EventLevel
 
-    session = MagicMock()
+    session = fresh_session()
     monkeypatch.setattr(enricher_task, "SessionLocal", lambda: session)
     monkeypatch.setattr(enricher_task, "create_vault_service", MagicMock())
     enricher = RecordingEnricher()
@@ -197,7 +215,7 @@ def test_terminal_status_is_published_after_summary_commit(
 
 @pytest.mark.parametrize("task_name", ["run_enricher", "run_template_enricher"])
 def test_task_setup_failure_also_emits_committed_failed_summary(monkeypatch, task_name):
-    session = MagicMock()
+    session = fresh_session()
     session.query.return_value.filter.return_value.first.side_effect = lambda: (
         session.add.call_args.args[0]
     )
@@ -235,3 +253,97 @@ def test_task_setup_failure_also_emits_committed_failed_summary(monkeypatch, tas
         "errors",
     } <= summary.keys()
     assert summary["duration_ms"] >= 0
+
+
+@pytest.mark.parametrize("task_name", ["run_enricher", "run_template_enricher"])
+def test_duplicate_completed_delivery_returns_saved_result(monkeypatch, task_name):
+    from datetime import datetime, timezone
+
+    from flowsint_core.core.enums import EventLevel
+    from flowsint_core.core.models import Scan
+
+    session = fresh_session()
+    scan = Scan(
+        id=uuid.uuid4(),
+        status=EventLevel.COMPLETED,
+        details=[{"saved": True}],
+        summary={"outcome": "results"},
+        completed_at=datetime.now(timezone.utc),
+    )
+    session.get.return_value = scan
+    monkeypatch.setattr(enricher_task, "SessionLocal", lambda: session)
+    factory = MagicMock()
+    monkeypatch.setattr(enricher_task.ENRICHER_REGISTRY, "get_enricher", factory)
+    result = (
+        getattr(enricher_task, task_name)
+        .apply(
+            args=["example", [], None, str(uuid.uuid4())],
+            task_id=str(scan.id),
+            throw=True,
+        )
+        .result
+    )
+    assert result == {"result": scan.details, "summary": scan.summary}
+    factory.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+
+
+def test_concurrent_delivery_does_not_change_scan(monkeypatch):
+    session = fresh_session()
+    monkeypatch.setattr(enricher_task, "SessionLocal", lambda: session)
+    monkeypatch.setattr(enricher_task, "task_lease", lambda *args: nullcontext(False))
+    result = _run().result
+    assert result["in_progress"] is True
+    session.get.assert_not_called()
+    session.commit.assert_not_called()
+
+
+def test_orphaned_delivery_retains_checkpoint_without_repeating_calls(monkeypatch):
+    from flowsint_core.core.enums import EventLevel
+    from flowsint_core.core.models import Scan
+
+    session = fresh_session()
+    scan = Scan(
+        id=uuid.uuid4(),
+        status=EventLevel.RUNNING,
+        summary={"committed_graph_operations": 100, "provider_request_count": 2},
+    )
+    session.get.return_value = scan
+    monkeypatch.setattr(enricher_task, "SessionLocal", lambda: session)
+    factory = MagicMock()
+    monkeypatch.setattr(enricher_task.ENRICHER_REGISTRY, "get_enricher", factory)
+    result = _run().result
+    assert result["summary"]["committed_graph_operations"] == 100
+    assert result["summary"]["provider_request_count"] == 2
+    assert result["summary"]["graph_commit_uncertain"] is True
+    assert result["summary"]["output_count"] is None
+    assert result["summary"]["outcome"] == "partial"
+    assert scan.completed_at is not None
+    factory.assert_not_called()
+
+
+def test_graph_checkpoint_records_committed_progress_and_provider_evidence():
+    from types import SimpleNamespace
+
+    from flowsint_core.core.graph.repository import Neo4jGraphRepository
+    from flowsint_core.core.models import Scan
+
+    session = fresh_session()
+    repository = Neo4jGraphRepository(MagicMock())
+    scan = Scan(id=uuid.uuid4(), summary={"outcome": "running"})
+    enricher = SimpleNamespace(_graph_service=SimpleNamespace(repository=repository))
+    enricher_task._checkpoint_enricher(
+        enricher, scan, session, {"max_new_entities": 20, "max_provider_requests": 3}
+    )
+    enricher.provider_request_count = 1
+    enricher.provider_evidence = [
+        {"provider": "example", "source_scan_id": str(scan.id)}
+    ]
+    repository._record_commit(100)
+    assert scan.summary["committed_graph_operations"] == 100
+    assert scan.summary["provider_request_count"] == 1
+    assert scan.summary["provider_evidence"] == enricher.provider_evidence
+    assert repository.max_new_entities == 20
+    assert enricher.provider_request_limit == 3
+    session.commit.assert_called_once()

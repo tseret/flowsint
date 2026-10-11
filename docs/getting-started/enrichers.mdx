@@ -72,3 +72,22 @@ CIDR expansion now supports `preview_only="true"` and string `max_results`
 (default `"256"`, maximum `"4096"`). Oversized ranges are reported as partial;
 the enricher never materializes an entire large network before applying its cap.
 Copilot use applies tighter per-action input limits and string parameters.
+
+## Provider reuse and partial results
+
+VirusTotal responses are reusable for one hour, Shodan responses for 15 minutes,
+scoped to the provider credential. Enable **Refresh** to request fresh evidence;
+refresh does not bypass shared cooldowns. Evidence cards show cached reuse and
+the original retrieval time and source scan. Provider observation dates remain
+distinct from retrieval dates.
+
+Concurrent requests share a credential-level lease. A request that cannot obtain
+it within five seconds reports partial and can be retried later. Configured Redis
+unavailability stops these lookups rather than making uncoordinated provider calls.
+Authentication and quota failures stop the affected batch. Transient retries are
+bounded; streamed JSON responses are capped at 4 MiB.
+
+Graph imports commit in batches. If a later batch fails, the scan reports partial
+and the count of confirmed graph operations; returned result counts are separate.
+Interrupted scans explicitly show when the final graph commit is uncertain.
+Duplicate task delivery reuses saved scans without repeating provider requests.

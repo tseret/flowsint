@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from flowsint_core.core.enricher_base import Enricher
+from flowsint_enrichers.provider_http import REFRESH_SCHEMA
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_enrichers.virustotal import KEY_SCHEMA, api_key, request_json, timestamp
 from flowsint_types.domain import Domain
@@ -23,7 +24,7 @@ class DomainToDnsDependenciesVirusTotal(Enricher):
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
-        return [KEY_SCHEMA.copy()]
+        return [REFRESH_SCHEMA.copy(), KEY_SCHEMA.copy()]
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         self._pairs = []
@@ -52,7 +53,16 @@ class DomainToDnsDependenciesVirusTotal(Enricher):
                             )
                             continue
                         results.append(target)
-                        self._pairs.append((domain, target, kind, observed, url))
+                        self._pairs.append(
+                            (
+                                domain,
+                                target,
+                                kind,
+                                observed,
+                                url,
+                                getattr(self, "last_provider_evidence", None),
+                            )
+                        )
                     if len(records) > 100:
                         self.report_issue(
                             "partial",
@@ -81,7 +91,7 @@ class DomainToDnsDependenciesVirusTotal(Enricher):
         self, results: List[OutputType], input_data: Optional[List[InputType]] = None
     ) -> List[OutputType]:
         if self._graph_service:
-            for source, target, kind, observed, url in self._pairs:
+            for source, target, kind, observed, url, evidence in self._pairs:
                 self.create_node(source)
                 self.create_node(target)
                 self.create_relationship(
@@ -95,5 +105,6 @@ class DomainToDnsDependenciesVirusTotal(Enricher):
                     observed_at=observed,
                     source_ref=url,
                     provider="VirusTotal",
+                    provider_evidence=evidence,
                 )
         return results

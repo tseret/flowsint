@@ -85,6 +85,75 @@ def test_agent_start_queues_one_run_for_unique_existing_seeds(
     backend[2].assert_called_once_with("run_investigation_agent", args=[run["id"]])
 
 
+def test_agent_policy_rejects_out_of_scope_seeds_before_dispatch(
+    client, db_session, backend
+):
+    headers, sketch_id = _seed_user(db_session, (Role.EDITOR,))
+    response = client.post(
+        "/api/copilot/agent",
+        headers=headers,
+        json=_agent(sketch_id, policy={"permitted_domains": ["other.org"]}),
+    )
+    assert response.status_code == 422
+    backend[2].assert_not_called()
+    assert db_session.query(AgentRun).count() == 0
+
+
+def test_resume_keeps_original_policy_and_saved_steps(client, db_session, backend):
+    headers, sketch_id = _seed_user(db_session, (Role.EDITOR,))
+    response = client.post(
+        "/api/copilot/agent",
+        headers=headers,
+        json=_agent(
+            sketch_id,
+            policy={"permitted_domains": ["example.org"], "max_provider_requests": 3},
+        ),
+    )
+    run_id = response.json()["id"]
+    run = db_session.get(AgentRun, UUID(run_id))
+    run.status = "failed"
+    run.steps = [
+        {
+            "step": 1,
+            "scan_id": str(uuid4()),
+            "outcome": "queued",
+            "objects": [{"domain": "example.org"}],
+        }
+    ]
+    db_session.commit()
+    backend[2].reset_mock()
+    resumed = client.post(f"/api/copilot/agent/{run_id}/resume", headers=headers)
+    assert resumed.status_code == 200
+    assert resumed.json()["policy"]["max_provider_requests"] == 3
+    assert resumed.json()["steps"][0]["scan_id"] == run.steps[0]["scan_id"]
+    assert "objects" not in resumed.json()["steps"][0]
+    backend[2].assert_called_once_with("run_investigation_agent", args=[run_id])
+    assert (
+        client.post(f"/api/copilot/agent/{run_id}/resume", headers=headers).status_code
+        == 409
+    )
+
+
+def test_legacy_run_cannot_resume_without_recorded_budget(client, db_session, backend):
+    headers, sketch_id = _seed_user(db_session, (Role.EDITOR,))
+    created = client.post(
+        "/api/copilot/agent", headers=headers, json=_agent(sketch_id)
+    ).json()
+    run = db_session.get(AgentRun, UUID(created["id"]))
+    run.policy = {}
+    run.status = "failed"
+    db_session.commit()
+    backend[2].reset_mock()
+    response = client.post(f"/api/copilot/agent/{run.id}/resume", headers=headers)
+    assert response.status_code == 409
+    assert "no recorded budgets" in response.json()["detail"]
+    assert (
+        client.get(f"/api/copilot/agent/{run.id}", headers=headers).json()["policy"]
+        is None
+    )
+    backend[2].assert_not_called()
+
+
 @pytest.mark.parametrize(
     "roles, body, code",
     [

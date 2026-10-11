@@ -7,7 +7,7 @@ handling raw GraphDict object and operations with batching support.
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic_core import to_jsonable_python
 
@@ -44,6 +44,33 @@ class Neo4jGraphRepository:
         self._connection = neo4j_connection or Neo4jConnection.get_instance()
         self._batch_operations: List[Tuple[str, Dict[str, Any]]] = []
         self._batch_size = 100
+        self.committed_operations = 0
+        self.on_commit: Optional[Callable[[int], None]] = None
+        self.max_new_entities: Optional[int] = None
+        self.new_entity_count = 0
+        self._seen_node_keys: set[tuple[str, str, str]] = set()
+
+    def _check_growth_budget(self, node_obj: GraphDict, sketch_id: str) -> None:
+        if self.max_new_entities is None:
+            return
+        identity = (
+            sketch_id,
+            str(node_obj.get("nodeType")),
+            str(node_obj.get("nodeKey", node_obj.get("nodeLabel"))),
+        )
+        if identity in self._seen_node_keys:
+            return
+        existing = self._connection.query(
+            "MATCH (n {sketch_id: $sketch_id, nodeKey: $node_key}) "
+            "WHERE $node_type IN labels(n) AND n.deleted_at IS NULL RETURN n LIMIT 1",
+            {"sketch_id": sketch_id, "node_key": identity[2], "node_type": identity[1]},
+        )
+        if not existing:
+            if self.new_entity_count >= self.max_new_entities:
+                raise ValueError("Investigation graph growth budget exhausted")
+            # Legacy nodes without canonical keys conservatively consume budget.
+            self.new_entity_count += 1
+        self._seen_node_keys.add(identity)
 
     def create_node(
         self,
@@ -66,8 +93,10 @@ class Neo4jGraphRepository:
         if not self._connection:
             return None
 
+        self._check_growth_budget(node_obj, sketch_id)
         query, params = self._build_node_query(node_obj, sketch_id)
         result = self._connection.query(query, params)
+        self._record_commit(1)
         return result[0]["id"] if result else None
 
     def create_relationship(
@@ -91,6 +120,7 @@ class Neo4jGraphRepository:
         query, params = self._build_relationship_query(rel_obj, sketch_id)
 
         self._connection.execute_write(query, params)
+        self._record_commit(1)
 
     def add_to_batch(self, operation_type: str, **kwargs: Any) -> None:
         """
@@ -101,6 +131,7 @@ class Neo4jGraphRepository:
             **kwargs: Operation parameters
         """
         if operation_type == "node":
+            self._check_growth_budget(kwargs["node_obj"], kwargs["sketch_id"])
             query, params = self._build_node_query(**kwargs)
         elif operation_type == "relationship":
             query, params = self._build_relationship_query(**kwargs)
@@ -237,8 +268,14 @@ class Neo4jGraphRepository:
 
         try:
             self._connection.execute_batch(self._batch_operations)
+            self._record_commit(len(self._batch_operations))
         finally:
             self._batch_operations.clear()
+
+    def _record_commit(self, count: int) -> None:
+        self.committed_operations += count
+        if self.on_commit is not None:
+            self.on_commit(self.committed_operations)
 
     def clear_batch(self) -> None:
         """Clear the batch without executing."""

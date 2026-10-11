@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from flowsint_enrichers.ip.to_internetdb import IpToInternetDbEnricher
@@ -22,6 +24,13 @@ async def test_port_identity_retains_host_across_all_port_connectors(
 ):
     class Response:
         status_code = 200
+        headers = {}
+
+        def close(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            yield json.dumps(payload).encode()
 
         def json(self):
             return payload

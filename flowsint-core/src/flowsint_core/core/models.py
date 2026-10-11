@@ -165,6 +165,8 @@ class AgentRun(Base):
     # running -> publishing -> completed; running -> cancelled; any active -> failed
     status: Mapped[str] = mapped_column(String, default="running")
     max_steps: Mapped[int] = mapped_column(Integer, default=20)
+    policy: Mapped[dict] = mapped_column(JSON, default=dict)
+    frontier: Mapped[dict] = mapped_column(JSON, default=dict)
     steps: Mapped[list] = mapped_column(JSON, default=list)
     report: Mapped[str | None] = mapped_column(Text, nullable=True)
     finding_ids: Mapped[list] = mapped_column(JSON, default=list)

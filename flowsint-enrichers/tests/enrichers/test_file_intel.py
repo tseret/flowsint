@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from flowsint_core.core.graph.serializer import GraphSerializer
@@ -18,6 +20,14 @@ class _Resp:
     def __init__(self, payload, status=200):
         self._payload, self.status_code, self.text = payload, status, "body"
 
+    headers = {}
+
+    def close(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        yield json.dumps(self.json()).encode()
+
     def json(self):
         return self._payload
 
@@ -37,7 +47,7 @@ def _setup(monkeypatch, enricher_cls, responses, key="k"):
     monkeypatch.setattr("flowsint_enrichers.ip.to_threatfox.Logger", _NoLogger)
     monkeypatch.setattr("flowsint_enrichers.file.to_malwarebazaar.requests.post", fake)
     monkeypatch.setattr("flowsint_enrichers.ip.to_threatfox.requests.post", fake)
-    monkeypatch.setattr("flowsint_enrichers.file.to_virustotal.requests.get", fake)
+    monkeypatch.setattr("flowsint_enrichers.provider_http.requests.get", fake)
     enricher = enricher_cls(sketch_id="s", scan_id="t")
     monkeypatch.setattr(enricher, "get_secret", lambda *a, **k: key)
     return enricher, calls

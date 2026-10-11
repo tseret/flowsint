@@ -1,5 +1,6 @@
 """Bounded, passive investigation agent scope, prompts and validation."""
 
+import hashlib
 import json
 import re
 from typing import Annotated, Any, Literal
@@ -76,6 +77,23 @@ PASSIVE_LIMITS = {
 }
 # Params validate as strings (build_params_model); enrichers coerce.
 PASSIVE_PARAMS = {"ip_to_domains_virustotal": {"max_pages": "1", "max_hosts": "15"}}
+REQUEST_COSTS = {
+    "certificate_to_domains": 0,
+    "domain_to_root_domain": 0,
+    "email_to_domain": 0,
+    "email_to_username": 0,
+    "website_to_domain": 0,
+    "domain_to_certificates_ct": 1,
+    "cidr_to_routing_history_ripestat": 1,
+    "domain_to_dns_dependencies_virustotal": 2,
+    "domain_to_ips_virustotal": 2,
+    "domain_to_reputation_virustotal": 2,
+    "ip_to_domains_virustotal": 2,
+    "ip_to_reputation_virustotal": 2,
+    "ip_to_ports_shodan": 2,
+    "file_to_virustotal": 2,
+}
+PASSIVE_PARAMS["domain_to_ips_virustotal"] = {"max_pages": "1"}
 PASSIVE_KEYS = {
     "domain_to_dns_dependencies_virustotal": {"VT_API_KEY"},
     "ip_to_ports_shodan": {"SHODAN_API_KEY"},
@@ -128,13 +146,15 @@ def eligible_catalog(
     metadata: list[dict[str, Any]],
     nodes: list[dict[str, Any]],
     available_keys: set[str],
+    *,
+    bounded_requests: bool = False,
 ) -> list[dict[str, Any]]:
     """Only reviewed, one-step passive lookups on compatible selected entities."""
     candidates = []
     for item in metadata:
         name = item.get("name", "")
         expected = PASSIVE_ENRICHERS.get(name)
-        if expected is None:
+        if expected is None or (bounded_requests and name not in REQUEST_COSTS):
             continue
         if str(item.get("inputs", {}).get("type", "")).lower() != expected:
             continue
@@ -159,6 +179,7 @@ def eligible_catalog(
                 "missing_keys": sorted(required - available_keys),
                 "max_inputs": PASSIVE_LIMITS.get(name, (10, None))[0],
                 "max_outputs": PASSIVE_LIMITS.get(name, (10, None))[1],
+                "request_cost": REQUEST_COSTS.get(name),
                 "provider_ids": sorted(required) or [str(item.get("provider") or name)],
             }
         )
@@ -288,7 +309,9 @@ class AgentDecision(BaseModel):
 class AgentFinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
     body: str = Field(min_length=1, max_length=4000)
-    scan_ids: list[str] = Field(min_length=1, max_length=20)
+    scan_ids: list[str] = Field(default_factory=list, max_length=20)
+    observation_ids: list[str] = Field(default_factory=list, max_length=20)
+    kind: Literal["fact", "hypothesis", "gap"] = "fact"
     target_node_id: str | None = Field(default=None, max_length=200)
 
 
@@ -383,12 +406,39 @@ def graph_observation(
         )
     selected = {entity["id"] for entity in entities}
     relationships = []
+    evidence_records: list[dict[str, Any]] = []
+    evidence_characters = 0
     matching_edges = [
         edge
         for edge in graph.edges
         if edge.source in selected and edge.target in selected
     ]
     for edge in matching_edges[: limit * 2]:
+        for raw in edge.observations[-3:]:
+            safe, clipped_record = _safe_context(raw)
+            evidence_truncated |= clipped_record
+            canonical = json.dumps(safe, sort_keys=True, separators=(",", ":"))
+            if (
+                len(canonical) > 2000
+                or len(evidence_records) >= 100
+                or evidence_characters + len(canonical) > 40000
+            ):
+                evidence_truncated = True
+                continue
+            evidence_characters += len(canonical)
+            evidence_records.append(
+                {
+                    "id": "obs-"
+                    + hashlib.sha256((edge.id + "\0" + canonical).encode()).hexdigest()[
+                        :24
+                    ],
+                    "edge_id": edge.id,
+                    "node_ids": [edge.source, edge.target],
+                    "relationship": (edge.type or edge.label)[:200],
+                    "scan_id": str(raw.get("scan_id") or ""),
+                    "data": safe,
+                }
+            )
         observations, clipped = _context_document(
             {"observations": edge.observations[-3:]}, limit=1000
         )
@@ -408,6 +458,7 @@ def graph_observation(
     return {
         "entities": entities,
         "relationships": relationships,
+        "observations": evidence_records,
         "shown_entity_count": len(entities),
         "shown_relationship_count": len(relationships),
         "degree_scope": "loaded neighborhood only",
@@ -508,12 +559,16 @@ def report_messages(
             _AGENT_RULES + " Write the final investigation report in markdown for "
             "the analyst: answer the objective, then observed facts, hypotheses, "
             "gaps and suggested human follow-ups. Use only supplied evidence and "
-            "cite every factual statement as [scan:ID] with a supplied run scan_id. "
+            "cite factual statements as [observation:ID] from graph.observations. "
+            "Use [scan:ID] for execution status only. Historical observations are valid "
+            "evidence but do not imply a new lookup. Citation validation checks references, "
+            "not whether the prose logically follows; avoid unsupported conclusions. "
             "Then propose at most 5 draft findings, each a self-contained statement "
-            "citing the scan_ids that support it and optionally the graph entity "
+            "with kind fact, hypothesis or gap, observation_ids supporting facts and "
+            "hypotheses, scan_ids matching those observations, and optionally the graph entity "
             "it concerns. Propose no finding when evidence is weak. "
             'Return ONLY JSON: {"report":"markdown","findings":[{"body":"...",'
-            '"scan_ids":["..."],"target_node_id":"..."|null}]}. report <=20000 '
+            '"kind":"fact","observation_ids":["..."],"scan_ids":["..."],"target_node_id":"..."|null}]}. report <=20000 '
             "characters, finding body <=4000.",
         ),
         ChatMessage(MessageRole.USER, json.dumps(content)),
@@ -521,13 +576,49 @@ def report_messages(
 
 
 _CITATION = re.compile(r"\[scan:([^\]\s]+)\]")
+_OBSERVATION_CITATION = re.compile(r"\[observation:([^\]\s]+)\]")
 
 
 def validate_report(
-    report: AgentReport, scan_ids: set[str], node_ids: set[str]
+    report: AgentReport,
+    scan_ids: set[str],
+    node_ids: set[str],
+    observation: dict[str, Any] | None = None,
 ) -> AgentReport:
     """Report citations must name this run's scans; findings citing anything
     else are dropped, and unknown target entities are cleared."""
+    if observation is not None:
+        records = {item["id"]: item for item in observation.get("observations", [])}
+        known_scans = scan_ids | {
+            item["scan_id"] for item in records.values() if item.get("scan_id")
+        }
+        if set(_CITATION.findall(report.report)) - known_scans:
+            raise ValueError("Citations reference unknown scans")
+        cited = set(_OBSERVATION_CITATION.findall(report.report))
+        if cited - records.keys():
+            raise ValueError("Citations reference unknown observations")
+        if records and not cited:
+            raise ValueError(
+                "The report must cite supplied evidence as [observation:ID]"
+            )
+        for finding in report.findings:
+            ids = set(finding.observation_ids)
+            if ids - records.keys() or (finding.kind != "gap" and not ids):
+                raise ValueError(
+                    "Facts and hypotheses require supplied observation references"
+                )
+            if finding.target_node_id and (
+                finding.target_node_id not in node_ids
+                or any(
+                    finding.target_node_id not in records[item]["node_ids"]
+                    for item in ids
+                )
+            ):
+                raise ValueError("Finding target does not match its cited observations")
+            supporting_scans = {records[item].get("scan_id") for item in ids}
+            if set(finding.scan_ids) - supporting_scans:
+                raise ValueError("Finding scans do not match its cited observations")
+        return report
     unknown = set(_CITATION.findall(report.report)) - scan_ids
     if unknown:
         raise ValueError(

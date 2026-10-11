@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from flowsint_enrichers.ip.to_shodan import IpToPortsShodanEnricher
@@ -34,13 +36,23 @@ class _Resp:
         self.status_code = status
         self._payload = payload
 
+    headers = {}
+
+    def close(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        yield json.dumps(self.json()).encode()
+
     def json(self):
         return self._payload
 
 
 def _enricher(monkeypatch, resp, key="k"):
     monkeypatch.setattr(f"{MOD}.Logger", _NoLogger)
-    monkeypatch.setattr(f"{MOD}.requests.get", lambda *a, **k: resp)
+    monkeypatch.setattr(
+        "flowsint_enrichers.provider_http.requests.get", lambda *a, **k: resp
+    )
     e = IpToPortsShodanEnricher(sketch_id="s", scan_id="t")
     monkeypatch.setattr(e, "get_secret", lambda *a, **k: key)
     return e
@@ -78,7 +90,8 @@ async def test_404_yields_nothing(monkeypatch):
 async def test_missing_key_makes_no_request(monkeypatch):
     e = _enricher(monkeypatch, _Resp(200, PAYLOAD), key=None)
     monkeypatch.setattr(
-        f"{MOD}.requests.get", lambda *a, **k: pytest.fail("should not call API")
+        "flowsint_enrichers.provider_http.requests.get",
+        lambda *a, **k: pytest.fail("should not call API"),
     )
     assert await e.scan([Ip(address="10.0.0.1")]) == []
 

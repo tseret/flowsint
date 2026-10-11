@@ -35,6 +35,10 @@ from flowsint_core.core.services import (
     create_sketch_service,
 )
 from flowsint_core.core.services.collaboration_service import CollaborationService
+from flowsint_core.core.services.copilot_policy import (
+    InvestigationScope,
+    validate_scope_step,
+)
 from flowsint_core.core.services.copilot_service import (
     CopilotRequest,
     candidate_review_evidence,
@@ -81,6 +85,7 @@ class AgentStartRequest(BaseModel):
     node_ids: list[str] = Field(min_length=1, max_length=10)
     objective: str = Field(min_length=1, max_length=2000)
     max_steps: int = Field(default=20, ge=1, le=50)
+    policy: InvestigationScope = Field(default_factory=InvestigationScope)
 
 
 def _check_sketch(db: Session, user: Profile, sketch_id: UUID, write: bool) -> None:
@@ -458,7 +463,11 @@ def _run_view(run: AgentRun) -> dict[str, Any]:
         "seed_ids": run.seed_ids,
         "status": run.status,
         "max_steps": run.max_steps,
-        "steps": run.steps,
+        "policy": run.policy or None,
+        "steps": [
+            {key: value for key, value in step.items() if key != "objects"}
+            for step in run.steps
+        ],
         "report": run.report,
         "finding_ids": run.finding_ids,
         "error": run.error,
@@ -516,8 +525,20 @@ def start_agent(
         sketch_id=str(payload.sketch_id), type_resolver=resolver
     )
     seeds = list(dict.fromkeys(payload.node_ids))
-    if {node.id for node in graph.get_nodes_by_ids(seeds)} != set(seeds):
+    seed_nodes = graph.get_nodes_by_ids(seeds)
+    if {node.id for node in seed_nodes} != set(seeds):
         raise HTTPException(404, "One or more selected entities are unavailable")
+    try:
+        validate_scope_step(
+            payload.policy,
+            [node.model_dump(mode="json") for node in seed_nodes],
+            {node: 0 for node in seeds},
+            0,
+            0,
+            estimated_requests=0,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
     # Fail an unavailable subscription now, before any provider usage is queued.
     try:
         create_chat_service(db).get_subscription_provider(current_user.id)
@@ -530,6 +551,8 @@ def start_agent(
         seed_ids=seeds,
         status="running",
         max_steps=payload.max_steps,
+        policy=payload.policy.model_dump(mode="json"),
+        frontier={node: 0 for node in seeds},
         steps=[],
         finding_ids=[],
     )
@@ -634,6 +657,49 @@ def cancel_agent_run(
         .values(status="cancelled", finished_at=datetime.now(timezone.utc))
     )
     db.commit()
+    db.refresh(run)
+    return _run_view(run)
+
+
+@router.post("/agent/{run_id}/resume")
+def resume_agent_run(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    run = _agent_run(db, current_user, run_id)
+    _check_sketch(db, current_user, run.sketch_id, write=True)
+    if run.owner_id != current_user.id:
+        raise HTTPException(403, "Only the run owner can resume their investigation.")
+    if run.status != "failed" or run.finding_ids:
+        raise HTTPException(409, "Only a failed, unpublished investigation can resume.")
+    if not run.policy:
+        raise HTTPException(
+            409,
+            "This older run has no recorded budgets. Retry its report or start a new scoped investigation.",
+        )
+    try:
+        create_chat_service(db).get_subscription_provider(current_user.id)
+    except (SubscriptionError, ValueError) as error:
+        raise HTTPException(502, str(error)) from None
+    result = db.execute(
+        update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.status == "failed")
+        .values(status="running", error=None, started_at=None, finished_at=None)
+    )
+    db.commit()
+    if not getattr(result, "rowcount", 0):
+        raise HTTPException(409, "This run has already changed. Reload it.")
+    try:
+        celery.send_task("run_investigation_agent", args=[str(run.id)])
+    except Exception:
+        db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run.id, AgentRun.status == "running")
+            .values(status="failed", error="Could not queue resume.")
+        )
+        db.commit()
+        raise HTTPException(503, "Could not queue resume.") from None
     db.refresh(run)
     return _run_view(run)
 

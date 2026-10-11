@@ -5,9 +5,8 @@ import os
 from typing import Any
 from urllib.parse import urlsplit
 
-import requests
-
 from flowsint_core.core.enricher_base import Enricher
+from flowsint_enrichers.provider_http import request_json as provider_request_json
 
 KEY_SCHEMA = {
     "name": "VT_API_KEY",
@@ -50,34 +49,9 @@ def timestamp(value: Any) -> str | None:
 def request_json(
     enricher: Enricher, url: str, key: str, params: dict | None = None
 ) -> dict | None:
-    try:
-        response = requests.get(
-            url,
-            params=params,
-            headers={"x-apikey": key},
-            timeout=30,
-            allow_redirects=False,
-        )
-        if response.status_code == 404:
-            return None
-        if response.status_code != 200:
-            outcome = "quota_exceeded" if response.status_code == 429 else "failed"
-            enricher.report_issue(
-                outcome, f"VirusTotal returned HTTP {response.status_code}."
-            )
-            if response.status_code in (401, 403, 429):
-                enricher._vt_stop = True
-            return None
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise ValueError("Invalid provider response")
-        return payload
-    except (requests.RequestException, ValueError) as exc:
-        # Exception strings can contain request URLs and secrets; retain only the type.
-        enricher.report_issue(
-            "failed", f"VirusTotal request failed ({type(exc).__name__})."
-        )
-        return None
+    payload = provider_request_json(enricher, "VirusTotal", url, key, params)
+    enricher._vt_stop = getattr(enricher, "_provider_stop", False)
+    return payload
 
 
 def resolutions(enricher: Enricher, url: str, key: str) -> list[dict]:
@@ -124,7 +98,8 @@ def resolutions(enricher: Enricher, url: str, key: str) -> list[dict]:
                 "partial", "VirusTotal returned malformed resolution records."
             )
             break
-        rows.extend(data)
+        evidence = getattr(enricher, "last_provider_evidence", None)
+        rows.extend({**row, "_provider_evidence": evidence} for row in data)
         continuation = (payload.get("links") or {}).get("next")
         if not continuation:
             break
@@ -175,6 +150,7 @@ async def reputation(enricher: Enricher, data: list, kind: str, field: str) -> l
                     total_votes=attrs.get("total_votes") or {},
                     categories=attrs.get("categories") or {},
                     tags=attrs.get("tags") or [],
+                    provider_evidence=getattr(enricher, "last_provider_evidence", None),
                 )
             except (ValueError, TypeError, AttributeError, OverflowError, OSError):
                 enricher.report_issue(
@@ -200,5 +176,6 @@ def reputation_graph(enricher: Enricher, results: list) -> list:
                 observed_at=rep.last_updated,
                 source_ref=rep.source,
                 provider="VirusTotal",
+                provider_evidence=(rep.model_extra or {}).get("provider_evidence"),
             )
     return results
