@@ -613,7 +613,10 @@ const DetailsPanel = memo(() => {
               onClick={async () => {
                 if (!sketchId || !node) return
                 try {
-                  const graph = await sketchService.getGraphDataById(sketchId)
+                  const graph = await sketchService.getGraphSlice(sketchId, {
+                    center_ids: [node.id],
+                    limit: 1
+                  })
                   const latest = graph.nds.find((item) => item.id === node.id)
                   if (!latest) throw new Error('Entity no longer exists')
                   blockedNodes.current.delete(node.id)

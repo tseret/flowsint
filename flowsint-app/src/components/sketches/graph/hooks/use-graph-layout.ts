@@ -10,6 +10,7 @@ interface UseGraphLayoutParams {
   saveAllNodePositions: (nodes: GraphNode[]) => void
   graphRef: React.RefObject<GraphViewerRef>
   graphData: GraphData
+  fitToView: () => void
 }
 
 export const useGraphLayout = ({
@@ -17,7 +18,8 @@ export const useGraphLayout = ({
   containerSize,
   saveAllNodePositions,
   graphRef,
-  graphData
+  graphData,
+  fitToView
 }: UseGraphLayoutParams) => {
   const [isRegeneratingLayout, setIsRegeneratingLayout] = useState(false)
   const requestRef = useRef(0)
@@ -55,7 +57,7 @@ export const useGraphLayout = ({
         // Wait a bit for positions to be applied, then zoom to fit
         setTimeout(() => {
           if (request === requestRef.current && graphRef.current?.zoomToFit) {
-            graphRef.current.zoomToFit(400)
+            fitToView()
           }
         }, 100)
       } catch (error) {
@@ -68,7 +70,7 @@ export const useGraphLayout = ({
         }, 600)
       }
     },
-    [applyLayout, graphRef, graphData]
+    [applyLayout, graphRef, graphData, fitToView]
   )
 
   return {

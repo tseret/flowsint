@@ -57,9 +57,10 @@ describe('infrastructure overview', () => {
     expect(overview.edges).toHaveLength(1)
     expect(overview.edges[0].weight).toBe(2)
     const expanded = infrastructureOverview(nodes, edges, 'asn', new Set([overview.groups[0].id]))
-    expect(expanded.nodes.find((item) => item.id === 'a')).toBe(nodes[0])
-    expect(expanded.nodes.find((item) => item.id === overview.groups[1].id)).toEqual(
-      overview.nodes[1]
+    expect(expanded.nodes.find((item) => item.id === 'a')).not.toBe(nodes[0])
+    expect(nodes[0]).toMatchObject({ x: 10, y: 20 })
+    expect(expanded.nodes.find((item) => item.id === overview.groups[1].id)?.nodeLabel).toEqual(
+      overview.nodes[1].nodeLabel
     )
     expect(nodes.every((item) => !item.nodeProperties.infrastructure_group)).toBe(true)
   })
@@ -76,7 +77,10 @@ describe('infrastructure overview', () => {
       'asn',
       new Set()
     )
-    expect(overview.nodes.find((item) => item.id === 'cert')).toBe(nodes[2])
+    expect(overview.nodes.find((item) => item.id === 'cert')).toMatchObject({
+      id: 'cert',
+      nodeType: 'certificate'
+    })
     expect(overview.groups.some((group) => group.label === 'No recorded asn')).toBe(true)
   })
 })
@@ -246,4 +250,30 @@ it('does not use timezone-naive observations to claim same-day provider disagree
       item.includes('provider evidence differs')
     )
   ).toBe(true)
+})
+
+it('keeps collapsed groups compact and expands without moving stored nodes', () => {
+  const nodes = Array.from({ length: 80 }, (_, i) => node(`host-${i}`, 'ip', { asn: `AS${i % 8}` }))
+  const original = structuredClone(nodes)
+  const overview = infrastructureOverview(nodes, [], 'asn', new Set())
+  expect(new Set(overview.nodes.map((item) => `${item.x}:${item.y}`)).size).toBe(8)
+  expect(
+    overview.nodes.every((item) => item.nodeSize === 10 && item.nodeType === 'infrastructure group')
+  ).toBe(true)
+  for (const a of overview.nodes)
+    for (const b of overview.nodes) {
+      if (a.id !== b.id) expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(70)
+    }
+  const expanded = infrastructureOverview(nodes, [], 'asn', new Set([overview.groups[0].id]))
+  expect(new Set(expanded.nodes.map((item) => `${item.x}:${item.y}`)).size).toBe(
+    expanded.nodes.length
+  )
+  expect(
+    expanded.nodes.filter((item) => item.nodeProperties.infrastructure_group).map((item) => item.id)
+  ).toEqual(overview.nodes.slice(1).map((item) => item.id))
+  expect(nodes).toEqual(original)
+  const reordered = infrastructureOverview([...nodes].reverse(), [], 'asn', new Set())
+  expect(reordered.nodes.map(({ id, x, y }) => ({ id, x, y }))).toEqual(
+    overview.nodes.map(({ id, x, y }) => ({ id, x, y }))
+  )
 })

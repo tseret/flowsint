@@ -26,7 +26,9 @@ export function calculateNodeSize(
   const nodeWeightMultiplierSize = forceSettings?.nodeWeightMultiplierSize?.value ?? 1.5
 
   const sizeMultiplier = nodeSizeValue / 100 + 0.2
-  const neighborBonus = Math.min((node.neighbors?.length || 0) / 5, 8) * nodeWeightMultiplierSize
+  const neighborBonus = node.nodeProperties.infrastructure_group
+    ? 0
+    : Math.min((node.neighbors?.length || 0) / 5, 8) * nodeWeightMultiplierSize
   const baseSize = (node.nodeSize + neighborBonus) * sizeMultiplier
 
   return shouldRenderDetails ? baseSize : baseSize * zoomedOutMultiplier

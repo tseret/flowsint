@@ -406,3 +406,13 @@ Done:
 Next:
 - Review the local changes and draft PR. No merge or team deployment performed.
 - Fresh external-provider lookups and live report-only model inference were not launched; fixtures cover new providers and recovery. Benchmark measures CPU helpers, not browser FPS or Neo4j throughput. Named views remain browser-local; full historical snapshots are not reconstructed.
+
+## 2026-10-11 — infrastructure overview visual correction
+Done:
+- Browser testing exposed overlapping centroid-based groups and clipped fit-to-view. Overview now uses stable separated group positions, normal-sized group labels, presentation-only expanded members, and measured display bounds when fitting. Stored entity coordinates are preserved.
+- Conflict recovery fetches the selected entity directly, so entities found beyond the initial 2,000-node slice can load their latest version.
+- Frontend suite: 92 passed, including group separation, source-coordinate preservation, fit-bound regressions and low-zoom card/dot labels. Full frontend ESLint: 0 errors, 127 existing warnings; Prettier passes. Full TypeScript checking retains existing errors outside changed files. The initial implementation commit passed all five CI jobs.
+- Live browser verified eight readable collapsed groups, including a 220-member group, and separated expansion of a 24-member group. Final frontend image includes the equivalent low-zoom dot-label correction.
+
+Next:
+- Review locally and in the same draft PR; team deployment and merge remain unperformed.

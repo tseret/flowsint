@@ -12,6 +12,7 @@ interface GraphControlActions {
 }
 
 interface UseGraphInitializationParams {
+  fitToView: () => void
   graphRef: React.RefObject<GraphViewerRef>
   instanceId?: string
   setActions: (actions: GraphControlActions) => void
@@ -26,10 +27,15 @@ export const useGraphInitialization = ({
   setActions,
   onGraphRef,
   selectedNodeIdsRef,
-  regenerateLayout
+  regenerateLayout,
+  fitToView
 }: UseGraphInitializationParams) => {
   const isGraphReadyRef = useRef(false)
   const regenerateLayoutRef = useRef(regenerateLayout)
+  const fitToViewRef = useRef(fitToView)
+  useEffect(() => {
+    fitToViewRef.current = fitToView
+  }, [fitToView])
 
   useEffect(() => {
     regenerateLayoutRef.current = regenerateLayout
@@ -53,7 +59,7 @@ export const useGraphInitialization = ({
         }
       },
       zoomToFit: () => {
-        graphRef.current?.zoomToFit(400)
+        fitToViewRef.current()
       },
       zoomToSelection: () => {
         if (graphRef.current) {

@@ -17,7 +17,8 @@ import {
   preloadExternalImage,
   preloadFlagImage
 } from './utils/image-cache'
-import { renderNode } from './node/node-renderer'
+import { renderNode, getNodeDisplayBounds } from './node/node-renderer'
+import { fitGraphViewport } from './utils/fit-graph'
 import { useKeyboardEvents } from './hooks/use-keyboard-events'
 import { renderLink } from './edge/link-renderer'
 import { createRenderContext, RenderContext } from './utils/render-context'
@@ -262,12 +263,42 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     return transformGraphData({ nodes, edges, nodeColors })
   }, [nodes, edges, nodeColors])
 
+  const measureContext = useRef<CanvasRenderingContext2D | null>(null)
+  const handleZoomToFitLocal = useCallback(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    if (!presentationOnly) {
+      graph.zoomToFit(400)
+      return
+    }
+    measureContext.current ??= document.createElement('canvas').getContext('2d')
+    const ctx = measureContext.current
+    if (!ctx) return
+    const view = fitGraphViewport(
+      graphData.nodes,
+      containerSize.width,
+      containerSize.height,
+      (node, zoom) => getNodeDisplayBounds(node, ctx, forceSettings, zoom, showLabels)
+    )
+    if (view) {
+      graph.centerAt(view.x, view.y, 400)
+      graph.zoom(view.zoom, 400)
+    }
+  }, [presentationOnly, graphData, containerSize, forceSettings, showLabels])
+
+  useEffect(() => {
+    if (!presentationOnly) return
+    const frame = requestAnimationFrame(handleZoomToFitLocal)
+    return () => cancelAnimationFrame(frame)
+  }, [presentationOnly, handleZoomToFitLocal])
+
   const { isRegeneratingLayout, regenerateLayout } = useGraphLayout({
     forceSettings,
     containerSize,
     saveAllNodePositions,
     graphRef,
-    graphData
+    graphData,
+    fitToView: handleZoomToFitLocal
   })
 
   const wrappedRegenerateLayout = useCallback(
@@ -393,20 +424,14 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     // Perform initial zoom to fit only once when graph is first rendered
     if (!hasPerformedInitialZoom.current && graphRef.current) {
       hasPerformedInitialZoom.current = true
-      if (typeof graphRef.current.zoomToFit === 'function') {
-        graphRef.current.zoomToFit(400)
-      }
+      handleZoomToFitLocal()
     }
-  }, [])
+  }, [handleZoomToFitLocal])
 
   // reset hasPerformedInitialZoom on sketch change
   useEffect(() => {
     if (hasPerformedInitialZoom.current) hasPerformedInitialZoom.current = false
   }, [sketchId])
-
-  const handleZoomToFitLocal = useCallback(() => {
-    graphRef.current?.zoomToFit(400)
-  }, [])
 
   useGraphInitialization({
     graphRef,
@@ -414,7 +439,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     setActions,
     onGraphRef,
     selectedNodeIdsRef,
-    regenerateLayout: wrappedRegenerateLayout
+    regenerateLayout: wrappedRegenerateLayout,
+    fitToView: handleZoomToFitLocal
   })
 
   // Clear highlights when graph data changes
@@ -591,7 +617,7 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
         height={containerSize.height}
         graphData={graphData}
         maxZoom={CONSTANTS.MAX_ZOOM}
-        minZoom={CONSTANTS.MIN_ZOOM}
+        minZoom={presentationOnly ? 0.001 : CONSTANTS.MIN_ZOOM}
         nodeLabel={() => ''}
         nodeRelSize={3}
         onNodeRightClick={handleNodeRightClick}

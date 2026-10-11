@@ -85,29 +85,69 @@ export function infrastructureOverview(
     members.push(node)
     groups.set(id, members)
   }
-  const result = nodes.filter(
-    (node) => !assignment.has(node.id) || expanded.has(assignment.get(node.id)!)
+  const orderedGroups = [...groups].sort(([a], [b]) => a.localeCompare(b))
+  const ungrouped = nodes
+    .filter((node) => !assignment.has(node.id))
+    .sort((a, b) => a.id.localeCompare(b.id))
+  const slots = [
+    ...orderedGroups.map(([id, members]) => ({ id, members })),
+    ...ungrouped.map((node) => ({ id: node.id, members: [node] }))
+  ]
+  const columns = Math.max(1, Math.ceil(Math.sqrt(slots.length)))
+  const widths = Array.from({ length: columns }, () => 150)
+  const heights = Array.from({ length: Math.ceil(slots.length / columns) }, () => 70)
+  slots.forEach((slot, index) => {
+    if (!expanded.has(slot.id)) return
+    const memberColumns = Math.ceil(Math.sqrt(slot.members.length))
+    widths[index % columns] = Math.max(widths[index % columns], memberColumns * 90 + 100)
+    heights[Math.floor(index / columns)] = Math.max(
+      heights[Math.floor(index / columns)],
+      Math.ceil(slot.members.length / memberColumns) * 60 + 100
+    )
+  })
+  const offsets = (sizes: number[]) => {
+    let offset = 0
+    return sizes.map((size) => {
+      const center = offset + size / 2
+      offset += size
+      return center
+    })
+  }
+  const xs = offsets(widths),
+    ys = offsets(heights)
+  const anchors = new Map(
+    slots.map((slot, index) => [
+      slot.id,
+      { x: xs[index % columns], y: ys[Math.floor(index / columns)] }
+    ])
   )
-  const summaries = [...groups].map(([id, members], index) => {
+  const result: GraphNode[] = ungrouped.map((node) => ({
+    ...node,
+    ...anchors.get(node.id)!,
+    fx: anchors.get(node.id)!.x,
+    fy: anchors.get(node.id)!.y
+  }))
+  const summaries = orderedGroups.map(([id, members]) => {
     const hosts = members.filter(isHost).length
     const flagged = members.filter((node) => node.nodeFlag).length
-    if (!expanded.has(id)) {
-      const positioned = members.filter(
-        (node) => Number.isFinite(node.x) && Number.isFinite(node.y)
-      )
-      const x = positioned.length
-        ? positioned.reduce((sum, node) => sum + node.x, 0) / positioned.length
-        : index * 140
-      const y = positioned.length
-        ? positioned.reduce((sum, node) => sum + node.y, 0) / positioned.length
-        : 0
+    const { x, y } = anchors.get(id)!
+    if (expanded.has(id)) {
+      const ordered = [...members].sort((a, b) => a.id.localeCompare(b.id))
+      const memberColumns = Math.ceil(Math.sqrt(ordered.length))
+      const rows = Math.ceil(ordered.length / memberColumns)
+      ordered.forEach((node, index) => {
+        const memberX = x + ((index % memberColumns) - (memberColumns - 1) / 2) * 90
+        const memberY = y + (Math.floor(index / memberColumns) - (rows - 1) / 2) * 60
+        result.push({ ...node, x: memberX, y: memberY, fx: memberX, fy: memberY })
+      })
+    } else {
       result.push({
         id,
-        nodeType: 'phrase',
+        nodeType: 'infrastructure group',
         nodeLabel: `${labels.get(id)} · ${hosts} hosts · ${members.length} entities`,
         nodeProperties: { infrastructure_group: true, members: members.map((node) => node.id) },
         nodeMetadata: {},
-        nodeSize: 12 + Math.min(18, Math.sqrt(members.length)),
+        nodeSize: 10,
         nodeColor: '#38bdf8',
         nodeIcon: 'Network',
         nodeImage: null,
