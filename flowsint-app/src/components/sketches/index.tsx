@@ -16,13 +16,15 @@ import MapPanel from '../map/map-panel'
 import NewActions from './add-item-dialog'
 import GraphMain from './graph/components/graph-main'
 import Settings, { KeyboardShortcuts } from './settings/settings'
-import { type GraphNode, type GraphEdge } from '@/types'
 import { MergeDialog } from './graph/actions/merge-nodes'
 import { useGraphRefresh } from '@/hooks/use-graph-refresh'
 import { usePermissions } from '@/hooks/use-can'
 import { preserveGraphPositions, graphChanges } from '@/lib/graph-presentation'
 import { Button } from '@/components/ui/button'
 import { RunSummaries } from './run-summary'
+import { GraphScope } from './graph-scope'
+import { TelemetryImport } from './telemetry-import'
+import type { SketchGraphData } from '@/types'
 const RelationshipsTable = lazy(() => import('@/components/table/relationships-view'))
 
 // Separate component for the drag overlay
@@ -41,7 +43,7 @@ const DragOverlay = memo(({ isDragging }: { isDragging: boolean }) => (
 DragOverlay.displayName = 'DragOverlay'
 
 interface GraphPanelProps {
-  graphData: { nds: GraphNode[]; rls: GraphEdge[] } | null
+  graphData: SketchGraphData | null
   isLoading: boolean
   isRefetching: boolean
 }
@@ -153,6 +155,12 @@ const GraphPanel = ({ graphData, isLoading }: GraphPanelProps) => {
     >
       <Toolbar isLoading={isLoading} />
       <RunSummaries sketchId={params.id} />
+      <GraphScope key={params.id} sketchId={params.id} graph={graphData} />
+      {canCreate && (
+        <div className="px-3 py-1 border-b">
+          <TelemetryImport sketchId={params.id} />
+        </div>
+      )}
       {!!collapsedTypes?.length && (
         <div className="flex flex-wrap gap-2 px-3 py-1 border-b">
           {collapsedTypes.map((type) => (

@@ -14,6 +14,7 @@ import ErrorState from '@/components/shared/error-state'
 import { PageLayout } from '@/components/layout/page-layout'
 import { templateService, type Template } from '@/api/template-service'
 import { CONFIG } from '@/config'
+import { EnricherCatalog } from '@/components/flows/enricher-catalog'
 
 export const Route = createFileRoute('/_auth/dashboard/enrichers/')({
   beforeLoad: async () => {
@@ -60,7 +61,7 @@ function TemplatesPage() {
       const content = e.target?.result as string
       navigate({
         to: '/dashboard/enrichers/new' as string,
-        state: { importedContent: content }
+        state: (previous) => ({ ...previous, importedContent: content })
       })
     }
     reader.onerror = () => {
@@ -85,8 +86,8 @@ function TemplatesPage() {
 
   return (
     <PageLayout
-      title="Enricher Templates"
-      description="Create and manage your enricher templates."
+      title="Enrichers"
+      description="Find investigation capabilities and manage custom templates."
       isLoading={isLoading}
       loadingComponent={
         <div className="p-2">
@@ -122,6 +123,8 @@ function TemplatesPage() {
         </div>
       }
     >
+      <EnricherCatalog />
+      <h2 className="mb-4 text-lg font-semibold">Custom templates</h2>
       {!isBannerDismissed && (
         <div className="mb-6 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3">
           <FlaskConical className="h-4 w-4 shrink-0 text-primary" />

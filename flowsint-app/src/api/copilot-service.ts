@@ -7,6 +7,7 @@ export type AgentStep = {
   reason: string
   thought?: string
   scan_id?: string
+  provider_block_reason?: string | null
   outcome: string
   output_count?: number
   errors?: { message: string }[]
@@ -16,7 +17,15 @@ export type AgentRun = {
   sketch_id: string
   objective: string
   seed_ids: string[]
-  status: 'running' | 'publishing' | 'completed' | 'failed' | 'cancelled' | 'undone'
+  status:
+    | 'running'
+    | 'publishing'
+    | 'reporting'
+    | 'report_pending'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'undone'
   max_steps: number
   steps: AgentStep[]
   report: string | null
@@ -121,6 +130,8 @@ export const copilotService = {
   latestAgentRun: (sketchId: string): Promise<AgentRun | null> =>
     fetchWithAuth(`/api/copilot/agent?sketch_id=${encodeURIComponent(sketchId)}`),
   getAgentRun: (id: string): Promise<AgentRun> => fetchWithAuth(`/api/copilot/agent/${id}`),
+  retryReport: (id: string): Promise<AgentRun> =>
+    fetchWithAuth(`/api/copilot/agent/${id}/retry-report`, { method: 'POST' }),
   cancelAgent: (id: string): Promise<AgentRun> =>
     fetchWithAuth(`/api/copilot/agent/${id}/cancel`, { method: 'POST' }),
   undoAgent: (

@@ -392,3 +392,17 @@ Done:
 Next:
 - Click a legend row on sketch d15772f2: the node count should drop and the legend counts should not change.
 - Team deployment still needs approval.
+
+## 2026-10-11 — infrastructure investigation improvements
+Done:
+- Implemented the audit recommendations: bounded graph retrieval/search/neighborhoods with explicit totals, infrastructure aggregation, focus, host/date comparisons, readable evidence cards/nested values, and layout/save/minimap performance fixes. Date comparisons exclude timestamps without a known timezone and never treat missing observations as absence.
+- Added report-only recovery with cited partial summaries, per-run provider quota/auth cooldown, and bounded topology/evidence context. New passive CT, certificate-name, indexed DNS-dependency and routing-history enrichers have reviewed copilot limits. CIDR expansion is bounded with preview; the catalog exposes purpose, provider, readiness, passive status, freshness and caps.
+- Added preview/transactional import for normalized, DNS/proxy, Zeek, Suricata and CloudTrail JSON telemetry; whole-batch validation, permission enforcement, dated local provenance, 2 MiB/1,000 record/2,000 edge caps, and no external requests.
+- Python suites: 918 passed, 5 skipped. Frontend: 86 passed; final date regression passed, including a second timezone. Python formatting/lint and changed-file mypy pass (also checked all new/uncommitted Python files); frontend formatting and ESLint pass (0 errors, 127 existing warnings). Full frontend TypeScript checking still reports existing errors outside this update. Final production images built successfully.
+- Existing localhost:5173 stack updated to `workspace-infrastructure-20261011` images. API, frontend, enrichment worker and dedicated agent worker healthy; databases unchanged. Root local override now explicitly inherits the agent worker environment because the root checkout's older compose file lacks that service. Local image builds remain sequential.
+- Live Neo4j transaction exercised graph limits/counts, search, neighbors and telemetry import/evidence serialization, then rolled back: zero synthetic nodes retained. Browser verified aggregate groups/expansion, server search, focus, two-host comparison, date exclusions, telemetry preview, catalog metadata and scan evidence cards. Saved user profile is GPT-6.1 Sol / medium / ChatGPT subscription.
+- Added user/developer documentation and a reproducible 1k/10k/100k helper benchmark. Draft PR: https://github.com/tseret/flowsint/pull/1.
+
+Next:
+- Review the local changes and draft PR. No merge or team deployment performed.
+- Fresh external-provider lookups and live report-only model inference were not launched; fixtures cover new providers and recovery. Benchmark measures CPU helpers, not browser FPS or Neo4j throughput. Named views remain browser-local; full historical snapshots are not reconstructed.

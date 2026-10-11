@@ -481,12 +481,12 @@ def _fail_if_lost(db: Session, run: AgentRun) -> AgentRun:
         update(AgentRun)
         .where(
             AgentRun.id == run.id,
-            AgentRun.status.in_(("running", "publishing")),
+            AgentRun.status.in_(("running", "reporting", "publishing")),
             AgentRun.started_at < now - LOST_AFTER,
         )
         .values(
             status="failed",
-            error="The agent worker stopped before finishing. Start a new run.",
+            error="The agent worker stopped before finishing. Retry the report from saved evidence.",
             finished_at=now,
         )
         .execution_options(synchronize_session=False)
@@ -573,6 +573,52 @@ def get_agent_run(
     return _run_view(_agent_run(db, current_user, run_id))
 
 
+@router.post("/agent/{run_id}/retry-report")
+def retry_agent_report(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Synthesize saved evidence without dispatching enrichment again."""
+    run = _agent_run(db, current_user, run_id)
+    _check_sketch(db, current_user, run.sketch_id, write=True)
+    if run.owner_id != current_user.id:
+        raise HTTPException(
+            403, "Only the run owner can retry using their subscription."
+        )
+    if run.status not in ("failed", "report_pending") or run.finding_ids:
+        raise HTTPException(409, "This run is not awaiting a report.")
+    try:
+        create_chat_service(db).get_subscription_provider(current_user.id)
+    except (SubscriptionError, ValueError) as error:
+        raise HTTPException(502, str(error)) from None
+    previous_status = run.status
+    result = db.execute(
+        update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.status == previous_status)
+        .values(status="reporting", error=None, started_at=None, finished_at=None)
+    )
+    db.commit()
+    if not getattr(result, "rowcount", 0):
+        raise HTTPException(409, "This run has already changed. Reload it.")
+    try:
+        celery.send_task(
+            "run_investigation_agent", args=[str(run.id)], kwargs={"report_only": True}
+        )
+    except Exception:
+        db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run.id, AgentRun.status == "reporting")
+            .values(status=previous_status, error="Could not queue report retry.")
+        )
+        db.commit()
+        raise HTTPException(
+            503, "Could not queue report retry. Try again when a worker is available."
+        ) from None
+    db.refresh(run)
+    return _run_view(run)
+
+
 @router.post("/agent/{run_id}/cancel")
 def cancel_agent_run(
     run_id: UUID,
@@ -602,7 +648,13 @@ def undo_agent_run(
     created, and draft findings nobody has edited or reviewed. Idempotent."""
     run = _agent_run(db, current_user, run_id)
     _check_sketch(db, current_user, run.sketch_id, write=True)
-    if run.status not in ("completed", "failed", "cancelled", "undone"):
+    if run.status not in (
+        "completed",
+        "failed",
+        "report_pending",
+        "cancelled",
+        "undone",
+    ):
         raise HTTPException(409, "Cancel the agent or let it finish before undoing it.")
     scan_ids = {step["scan_id"] for step in run.steps if step.get("scan_id")}
     # Cancelling does not revoke a step's scan: it may still be queued (no Scan
@@ -633,7 +685,6 @@ def undo_agent_run(
         raise HTTPException(
             409, "An enrichment from this run is still running. Undo it once it ends."
         )
-    scan_ids = sorted(scan_ids)
     # A relationship's first observation names the scan that created it
     # (observations are JSON with sorted keys).
     [removed] = create_graph_service(sketch_id=str(run.sketch_id)).query(
@@ -650,7 +701,7 @@ def undo_agent_run(
         RETURN nodes, count(r) AS relationships""",
         {
             "sketch_id": str(run.sketch_id),
-            "scan_ids": scan_ids,
+            "scan_ids": sorted(scan_ids),
             "needles": [json.dumps({"scan_id": scan_id})[1:-1] for scan_id in scan_ids],
             "now": datetime.now(timezone.utc).isoformat(),
         },

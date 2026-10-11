@@ -50,7 +50,8 @@ class IpToDomainsVirusTotal(Enricher):
         seen = set()
         for item in data:
             url = f"https://www.virustotal.com/api/v3/ip_addresses/{item.address}/resolutions"
-            pairs, hosts = [], {}
+            pairs = []
+            hosts: dict[str, Domain] = {}
             for row in resolutions(self, url, key):
                 attrs = row.get("attributes") or {}
                 value = attrs.get("host_name")

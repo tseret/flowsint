@@ -15,8 +15,12 @@ from ..llm.types import ChatMessage, MessageRole
 PASSIVE_ENRICHERS = {
     "asn_to_cidrs": "asn",
     "asn_to_cidrs_ripestat": "asn",
+    "certificate_to_domains": "sslcertificate",
+    "cidr_to_routing_history_ripestat": "cidr",
     "cryptowallet_to_nfts": "cryptowallet",
     "cryptowallet_to_transactions": "cryptowallet",
+    "domain_to_certificates_ct": "domain",
+    "domain_to_dns_dependencies_virustotal": "domain",
     "domain_to_dehashed": "domain",
     "domain_to_history": "domain",
     "domain_to_ips_virustotal": "domain",
@@ -63,9 +67,17 @@ PASSIVE_ENRICHERS = {
     "website_to_domain": "website",
     "website_to_urlhaus": "website",
 }
+# Reviewed fixed output caps; one input keeps each autonomous pivot bounded.
+PASSIVE_LIMITS = {
+    "domain_to_certificates_ct": (1, 100),
+    "certificate_to_domains": (1, 500),
+    "domain_to_dns_dependencies_virustotal": (1, 100),
+    "cidr_to_routing_history_ripestat": (1, 100),
+}
 # Params validate as strings (build_params_model); enrichers coerce.
 PASSIVE_PARAMS = {"ip_to_domains_virustotal": {"max_pages": "1", "max_hosts": "15"}}
 PASSIVE_KEYS = {
+    "domain_to_dns_dependencies_virustotal": {"VT_API_KEY"},
     "ip_to_ports_shodan": {"SHODAN_API_KEY"},
     "ip_to_ports_modat": {"MODAT_API_KEY"},
     "ip_to_reputation_virustotal": {"VT_API_KEY"},
@@ -145,9 +157,38 @@ def eligible_catalog(
                 "node_ids": ids,
                 "description": str(item.get("description") or "")[:1000],
                 "missing_keys": sorted(required - available_keys),
+                "max_inputs": PASSIVE_LIMITS.get(name, (10, None))[0],
+                "max_outputs": PASSIVE_LIMITS.get(name, (10, None))[1],
+                "provider_ids": sorted(required) or [str(item.get("provider") or name)],
             }
         )
     return candidates
+
+
+def provider_block_reason(step: dict[str, Any]) -> str | None:
+    """Normalize provider failures, including partial scans with quota errors."""
+    issues = [step, *(step.get("errors") or [])]
+    for issue in issues:
+        outcome = str(issue.get("outcome", ""))
+        message = str(issue.get("message", "")).lower()
+        if outcome == "quota_exceeded" or any(
+            term in message
+            for term in (
+                "429",
+                "quota",
+                "rate limit",
+                "rate-limit",
+                "usage limit",
+                "credits exhausted",
+            )
+        ):
+            return "Provider allowance or rate limit reached; paused for this run."
+        if outcome in {"missing_credentials", "authentication_failed"} or any(
+            term in message
+            for term in ("401", "403", "unauthorized", "invalid api key", "forbidden")
+        ):
+            return "Provider credentials or permissions rejected; paused for this run."
+    return None
 
 
 def validate_plan(
@@ -175,6 +216,11 @@ def validate_plan(
         if step.enricher in seen:
             raise ValueError("Plan repeats an enricher")
         seen.add(step.enricher)
+        max_inputs = PASSIVE_LIMITS.get(step.enricher, (10, None))[0]
+        if len(step.node_ids) > max_inputs:
+            raise ValueError(
+                f"{step.enricher} accepts at most {max_inputs} entity per agent step"
+            )
         ids = set(step.node_ids)
         if (
             len(ids) != len(step.node_ids)
@@ -319,9 +365,11 @@ def graph_observation(
         ),
     )
     entities = []
+    evidence_truncated = False
     for node in nodes[:limit]:
         # Per-entity cap keeps one verbose node from crowding out the graph.
-        properties, _ = _context_document(node.nodeProperties or {}, limit=400)
+        properties, clipped = _context_document(node.nodeProperties or {}, limit=400)
+        evidence_truncated |= clipped
         entities.append(
             {
                 "id": node.id,
@@ -333,11 +381,46 @@ def graph_observation(
                 "properties": json.loads(properties),
             }
         )
+    selected = {entity["id"] for entity in entities}
+    relationships = []
+    matching_edges = [
+        edge
+        for edge in graph.edges
+        if edge.source in selected and edge.target in selected
+    ]
+    for edge in matching_edges[: limit * 2]:
+        observations, clipped = _context_document(
+            {"observations": edge.observations[-3:]}, limit=1000
+        )
+        clipped |= len(edge.observations) > 3
+        evidence_truncated |= clipped
+        relationships.append(
+            {
+                "id": edge.id,
+                "source": edge.source,
+                "target": edge.target,
+                "relationship": (edge.type or edge.label)[:200],
+                "caption": (edge.caption or "")[:300],
+                "evidence": json.loads(observations),
+                "evidence_truncated": clipped,
+            }
+        )
     return {
         "entities": entities,
-        "entity_count": len(nodes),
-        "edge_count": len(graph.edges),
-        "truncated": len(nodes) > limit,
+        "relationships": relationships,
+        "shown_entity_count": len(entities),
+        "shown_relationship_count": len(relationships),
+        "degree_scope": "loaded neighborhood only",
+        "entity_count": graph.total_nodes
+        if graph.total_nodes is not None
+        else len(nodes),
+        "edge_count": graph.total_edges
+        if graph.total_edges is not None
+        else len(graph.edges),
+        "truncated": graph.truncated
+        or evidence_truncated
+        or len(nodes) > limit
+        or len(matching_edges) > limit * 2,
     }
 
 
@@ -368,6 +451,8 @@ def decision_messages(
             "enricher": item["enricher"],
             "input_type": PASSIVE_ENRICHERS[item["enricher"]],
             "description": item["description"][:300],
+            "max_inputs": item.get("max_inputs", 10),
+            "max_outputs": item.get("max_outputs"),
         }
         for item in catalog
     ]
@@ -384,7 +469,7 @@ def decision_messages(
         ChatMessage(
             MessageRole.SYSTEM,
             _AGENT_RULES + " Choose the single next lookup that best advances the "
-            "objective, applied to up to 10 entity IDs of its input_type taken from "
+            "objective, respecting its max_inputs and max_outputs limits (at most 10 entity IDs) of its input_type taken from "
             "the graph. Never repeat an enricher on an entity listed in "
             "completed_steps. Pivot on new entities when they matter to the "
             "objective. Reverse lookups (IP→domains) on shared hosting return "

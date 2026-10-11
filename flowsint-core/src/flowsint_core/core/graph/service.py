@@ -171,7 +171,29 @@ class GraphService:
             graph_data.get("nodes", []), type_resolver=self._type_resolver
         )
         edges = GraphSerializer.deserialize_edges(graph_data.get("edges", []))
-        return GraphData(nodes=nodes, edges=edges)
+        return GraphData(
+            nodes=nodes, edges=edges, truncated=bool(graph_data.get("truncated", False))
+        )
+
+    def get_graph_slice(
+        self,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        limit: int = 150,
+        offset: int = 0,
+    ) -> GraphData:
+        data = self.repository.get_graph_slice(
+            self.sketch_id, center_ids, search, limit, offset
+        )
+        return GraphData(
+            nodes=GraphSerializer.deserialize_nodes(
+                data["nodes"], type_resolver=self._type_resolver
+            ),
+            edges=GraphSerializer.deserialize_edges(data["edges"]),
+            total_nodes=data["total_nodes"],
+            total_edges=data["total_edges"],
+            truncated=data["truncated"],
+        )
 
     def get_nodes_by_ids(self, node_ids: List[str]) -> List[GraphNode]:
         nodes = self.repository.get_nodes_by_ids(node_ids, self.sketch_id)

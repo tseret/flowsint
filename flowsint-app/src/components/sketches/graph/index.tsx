@@ -58,6 +58,7 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   instanceId,
   allowLasso = false,
   sketchId,
+  presentationOnly = false,
   allowForces = false,
   autoZoomOnNode = true,
   showMinimalControls = false,
@@ -65,6 +66,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   enableNodeDrag: enableNodeDragProp = true,
   linkCreation: linkCreationProp
 }) => {
+  const [viewportRevision, setViewportRevision] = useState(0)
+  const [positionRevision, setPositionRevision] = useState(0)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   const graphRef = useRef<GraphViewerRef>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -78,7 +81,13 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     }
   })
 
-  const { saveAllNodePositions } = useSaveNodePositions(sketchId)
+  const { saveAllNodePositions: persistNodePositions } = useSaveNodePositions(sketchId)
+  const saveAllNodePositions = useCallback(
+    (nodes: GraphNode[], force = false) => {
+      if (!presentationOnly) persistNodePositions(nodes, force)
+    },
+    [presentationOnly, persistNodePositions]
+  )
 
   const isSelectorModeActive = useGraphControls((s) => s.isSelectorModeActive)
   const selectionMode = useGraphControls((s) => s.selectionMode)
@@ -112,7 +121,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   const allEdges = useGraphStore((s) => s.edges)
   // Only the sketch graph (it has a sketchId) gets depth rings: a subgraph such as the neighbors
   // preview has other seeds, so its numbering would disagree with the main graph.
-  const showDiscoveryWaves = (forceSettings.showDiscoveryWaves?.value ?? true) && !!sketchId
+  const showDiscoveryWaves =
+    (forceSettings.showDiscoveryWaves?.value ?? true) && !!sketchId && !presentationOnly
   const discoveryWaves = useMemo(
     () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes, allEdges) : null),
     [showDiscoveryWaves, allNodes, allEdges]
@@ -379,6 +389,7 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   const hasPerformedInitialZoom = useRef(false)
 
   const handleEngineStop = useCallback(() => {
+    setPositionRevision((revision) => revision + 1)
     // Perform initial zoom to fit only once when graph is first rendered
     if (!hasPerformedInitialZoom.current && graphRef.current) {
       hasPerformedInitialZoom.current = true
@@ -587,12 +598,13 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
         onNodeClick={handleNodeClick}
         onBackgroundClick={handleBackgroundClick}
         onBackgroundRightClick={handleBackgroundRightClick}
-        onLinkClick={handleEdgeClick}
+        onLinkClick={presentationOnly ? undefined : handleEdgeClick}
         onLinkRightClick={handleEdgeRightClick}
         linkCurvature={(link) => link.curvature || 0}
         nodeCanvasObject={renderNodeCallback}
         onNodeDragEnd={wrappedHandleNodeDragEnd}
         onEngineStop={handleEngineStop}
+        onZoomEnd={() => setViewportRevision((revision) => revision + 1)}
         cooldownTicks={allowForces ? forceSettings.cooldownTicks.value : 0}
         cooldownTime={forceSettings.cooldownTime.value}
         d3AlphaDecay={forceSettings.d3AlphaDecay.value}
@@ -633,6 +645,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
           graphRef={graphRef}
           canvasWidth={containerSize.width}
           canvasHeight={containerSize.height}
+          viewportRevision={viewportRevision}
+          positionRevision={positionRevision}
         />
       )}
       {discoveryWaves && discoveryWaves.waves.length > 0 && (

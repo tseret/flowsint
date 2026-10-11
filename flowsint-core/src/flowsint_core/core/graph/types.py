@@ -68,3 +68,6 @@ class GraphEdge(BaseModel):
 class GraphData(BaseModel):
     nodes: List[GraphNode]
     edges: List[GraphEdge]
+    total_nodes: Optional[int] = None
+    total_edges: Optional[int] = None
+    truncated: bool = False

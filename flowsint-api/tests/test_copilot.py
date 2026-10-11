@@ -767,3 +767,55 @@ def test_import_rejects_stale_unscoped_or_invalid_finding(
         if change != "graph_changed"
         else True
     )
+
+
+def test_retry_report_reuses_evidence_and_rejects_second_request(
+    client, db_session, backend
+):
+    headers, sketch_id = _seed_user(db_session, (Role.EDITOR,))
+    started = client.post(
+        "/api/copilot/agent", headers=headers, json=_agent(sketch_id)
+    ).json()
+    run = db_session.get(AgentRun, UUID(started["id"]))
+    run.status = "report_pending"
+    run.report = "Partial evidence summary"
+    run.steps = [
+        {
+            "scan_id": str(uuid4()),
+            "enricher": "domain_to_whois",
+            "node_ids": ["domain-1"],
+            "outcome": "results",
+        }
+    ]
+    db_session.commit()
+    backend[2].reset_mock()
+    response = client.post(f"/api/copilot/agent/{run.id}/retry-report", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "reporting"
+    assert response.json()["report"] == "Partial evidence summary"
+    assert len(response.json()["steps"]) == 1
+    backend[2].assert_called_once_with(
+        "run_investigation_agent", args=[str(run.id)], kwargs={"report_only": True}
+    )
+    assert (
+        client.post(
+            f"/api/copilot/agent/{run.id}/retry-report", headers=headers
+        ).status_code
+        == 409
+    )
+
+
+def test_retry_report_queue_failure_keeps_saved_evidence(client, db_session, backend):
+    headers, sketch_id = _seed_user(db_session, (Role.EDITOR,))
+    started = client.post(
+        "/api/copilot/agent", headers=headers, json=_agent(sketch_id)
+    ).json()
+    run = db_session.get(AgentRun, UUID(started["id"]))
+    run.status = "report_pending"
+    run.report = "Saved evidence"
+    db_session.commit()
+    backend[2].side_effect = RuntimeError("broker unavailable")
+    response = client.post(f"/api/copilot/agent/{run.id}/retry-report", headers=headers)
+    assert response.status_code == 503
+    db_session.refresh(run)
+    assert run.status == "report_pending" and run.report == "Saved evidence"

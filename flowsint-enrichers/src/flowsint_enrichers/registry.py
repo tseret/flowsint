@@ -14,6 +14,7 @@ import sys
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from flowsint_core.core.enricher_base import Enricher
+from flowsint_enrichers.catalog import metadata, visible
 
 E = TypeVar("E", bound=Enricher)
 
@@ -48,9 +49,10 @@ class EnricherRegistry:
             raise Exception(f"Enricher '{name}' not found")
         return self._enrichers[name](sketch_id=sketch_id, scan_id=scan_id, **kwargs)
 
-    def _create_enricher_metadata(self, enricher: Type[Enricher]) -> Dict[str, str]:
+    def _create_enricher_metadata(self, enricher: Type[Enricher]) -> Dict[str, Any]:
         """Helper method to create enricher metadata dictionary."""
         return {
+            **metadata(enricher),
             "class_name": enricher.__name__,
             "name": enricher.name(),
             "module": enricher.__module__,
@@ -77,15 +79,17 @@ class EnricherRegistry:
                     "wobblyType": wobbly_type,
                 }
                 for enricher in self._enrichers.values()
-                if enricher.name() not in exclude
+                if visible(enricher) and enricher.name() not in exclude
             ],
             key=lambda item: item["name"],
         )
 
-    def list_by_categories(self) -> Dict[str, List[Dict[str, str]]]:
-        enrichers_by_category: Dict[str, List[Dict[str, str]]] = {}
+    def list_by_categories(self) -> Dict[str, List[Dict[str, Any]]]:
+        enrichers_by_category: Dict[str, List[Dict[str, Any]]] = {}
 
         for enricher in self._enrichers.values():
+            if not visible(enricher):
+                continue
             category = enricher.category()
             enrichers_by_category.setdefault(category, []).append(
                 self._create_enricher_metadata(enricher)
@@ -101,7 +105,7 @@ class EnricherRegistry:
 
     def list_by_input_type(
         self, input_type: str, exclude: Optional[List[str]] = None
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         if exclude is None:
             exclude = []
         input_type_lower = input_type.lower()
@@ -109,13 +113,14 @@ class EnricherRegistry:
             items = [
                 self._create_enricher_metadata(enricher)
                 for enricher in self._enrichers.values()
-                if enricher.name() not in exclude
+                if visible(enricher) and enricher.name() not in exclude
             ]
         else:
             items = [
                 self._create_enricher_metadata(enricher)
                 for enricher in self._enrichers.values()
                 if enricher.input_schema()["type"].lower() in ("any", input_type_lower)
+                and visible(enricher)
                 and enricher.name() not in exclude
             ]
         items.sort(key=lambda x: x["name"])

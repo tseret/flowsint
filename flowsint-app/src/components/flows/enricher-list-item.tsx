@@ -14,6 +14,7 @@ import { useNodesDisplaySettings } from '@/stores/node-display-settings'
 import { Badge } from '../ui/badge'
 import { type EnricherItemProps } from '@/types/enricher'
 import { useIcon } from '@/hooks/use-icon'
+import { EnricherMetadata } from './enricher-metadata'
 
 // Custom equality function for EnricherItem
 function areEqual(prevProps: EnricherItemProps, nextProps: EnricherItemProps) {
@@ -30,8 +31,8 @@ function areEqual(prevProps: EnricherItemProps, nextProps: EnricherItemProps) {
 // Memoized enricher item component for the sidebar
 const EnricherItem = memo(({ enricher, category }: EnricherItemProps) => {
   const colors = useNodesDisplaySettings((s) => s.colors)
-  const borderInputColor = colors[enricher.inputs.type.toLowerCase()]
-  const borderOutputColor = colors[enricher.outputs.type.toLowerCase()]
+  const borderInputColor = colors[enricher.inputs.type.toLowerCase() as keyof typeof colors]
+  const borderOutputColor = colors[enricher.outputs.type.toLowerCase() as keyof typeof colors]
   // useIcon must be called unconditionally (Rules of Hooks) — resolve the icon
   // key first, then decide whether to use the result.
   const wantsIcon = enricher.type === 'type' || Boolean(enricher.icon)
@@ -78,7 +79,7 @@ const EnricherItem = memo(({ enricher, category }: EnricherItemProps) => {
                 <div className="flex items-center gap-2 truncate text-ellipsis">
                   {Icon && <Icon size={24} />}
                   <h3 className="text-sm font-medium truncate text-ellipsis">
-                    {enricher.class_name}
+                    {enricher.display_name || enricher.class_name}
                   </h3>
                 </div>
                 <p className="text-xs font-normal truncate text-ellipsis opacity-60">
@@ -86,6 +87,7 @@ const EnricherItem = memo(({ enricher, category }: EnricherItemProps) => {
                 </p>
                 {enricher.type !== 'type' && (
                   <div className="mt-2 text-xs">
+                    <EnricherMetadata enricher={enricher} />
                     <div className="flex items-center gap-1">
                       <span className="font-medium">Input:</span>
                       <span className="text-muted-foreground truncate text-ellipsis">
@@ -127,7 +129,7 @@ const EnricherItem = memo(({ enricher, category }: EnricherItemProps) => {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <div className="w-1 h-6 rounded-full" style={{ backgroundColor: borderInputColor }} />
-              {enricher.class_name}
+              {enricher.display_name || enricher.class_name}
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">

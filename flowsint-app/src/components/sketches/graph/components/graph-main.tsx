@@ -1,6 +1,13 @@
 import { useGraphStore } from '@/stores/graph-store'
 import { useGraphControls } from '@/stores/graph-controls-store'
-import { compactPivotGraph } from '@/lib/graph-presentation'
+import { compactPivotGraph, preserveGraphPositions } from '@/lib/graph-presentation'
+import { sketchService } from '@/api/sketch-service'
+import {
+  boundedNeighborhood,
+  infrastructureOverview,
+  type InfrastructureGrouping
+} from '@/lib/infrastructure-analysis'
+import { InfrastructureTools, type InfrastructureMode } from './infrastructure-tools'
 import React, {
   useRef,
   useCallback,
@@ -67,7 +74,7 @@ const GraphMain = () => {
   const currentNodeId = useGraphStore((s) => s.currentNodeId)
   const currentEdgeId = useGraphStore((s) => s.currentEdgeId)
   const expanded = useGraphControls((s) => s.showPivotServices)
-  const displayed = useMemo(
+  const compacted = useMemo(
     () =>
       compactPivotGraph(filteredNodes, filteredEdges, {
         expanded,
@@ -90,6 +97,89 @@ const GraphMain = () => {
       currentEdgeId
     ]
   )
+
+  const [mode, setMode] = React.useState<InfrastructureMode>(
+    filteredNodes.length > 500 ? 'overview' : 'graph'
+  )
+  const [grouping, setGrouping] = React.useState<InfrastructureGrouping>('asn')
+  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set())
+  const [focusIds, setFocusIds] = React.useState<string[]>([])
+  const [loadingNeighbors, setLoadingNeighbors] = React.useState(false)
+  const [scopeStatus, setScopeStatus] = React.useState('')
+  const requestRef = useRef(0)
+  React.useEffect(
+    () => () => {
+      requestRef.current++
+    },
+    [sketchId]
+  )
+  const selection = useMemo(
+    () => [
+      ...new Set([
+        ...selectedNodes.map((node) => node.id),
+        ...(currentNodeId ? [currentNodeId] : [])
+      ])
+    ],
+    [selectedNodes, currentNodeId]
+  )
+  const overview = useMemo(
+    () => infrastructureOverview(filteredNodes, filteredEdges, grouping, expandedGroups),
+    [filteredNodes, filteredEdges, grouping, expandedGroups]
+  )
+  const neighborhood = useMemo(
+    () => boundedNeighborhood(filteredNodes, filteredEdges, focusIds),
+    [filteredNodes, filteredEdges, focusIds]
+  )
+  const displayed = mode === 'overview' ? overview : mode === 'focus' ? neighborhood : compacted
+  const toggleGroup = useCallback(
+    (id: string) =>
+      setExpandedGroups((previous) => {
+        const next = new Set(previous)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      }),
+    []
+  )
+  const focusSelection = useCallback(() => {
+    setFocusIds(selection)
+    setMode('focus')
+    setScopeStatus(
+      'One-hop neighborhood from the loaded graph, limited to 500 entities. Select a visible entity to move the focus or load its neighbors.'
+    )
+  }, [selection])
+  const loadNeighbors = useCallback(async () => {
+    if (!sketchId || !selection.length) return
+    const request = ++requestRef.current
+    setLoadingNeighbors(true)
+    try {
+      const slice = await sketchService.getGraphSlice(sketchId, {
+        center_ids: selection.slice(0, 50),
+        limit: 500
+      })
+      if (request !== requestRef.current) return
+      const store = useGraphStore.getState()
+      const edges = [
+        ...new Map([...store.edges, ...slice.rls].map((edge) => [edge.id, edge])).values()
+      ]
+      const nodes = [
+        ...new Map([...store.nodes, ...slice.nds].map((node) => [node.id, node])).values()
+      ]
+      store.updateGraphData(preserveGraphPositions(nodes, store.nodes, edges), edges)
+      setFocusIds(selection.slice(0, 50))
+      setMode('focus')
+      setScopeStatus(
+        `Loaded ${slice.nds.length} entities around ${Math.min(selection.length, 50)} selected centers. ${slice.truncated ? 'Partial sketch loaded; focus on a returned entity to explore further.' : 'Returned neighborhood loaded.'} Existing positions preserved.`
+      )
+    } catch (error) {
+      if (request === requestRef.current)
+        setScopeStatus(
+          error instanceof Error ? error.message : 'Could not load neighbors. Try again.'
+        )
+    } finally {
+      if (request === requestRef.current) setLoadingNeighbors(false)
+    }
+  }, [sketchId, selection])
 
   const graphRef = useRef<GraphViewerRef>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -116,6 +206,10 @@ const GraphMain = () => {
 
   const handleNodeClick = useCallback(
     (node: GraphNode, event: MouseEvent) => {
+      if (node.nodeProperties.infrastructure_group) {
+        toggleGroup(node.id)
+        return
+      }
       const isMultiSelect = event.ctrlKey || event.shiftKey
       if (isMultiSelect) {
         toggleNodeSelection(node, true)
@@ -124,7 +218,7 @@ const GraphMain = () => {
         clearSelectedNodes()
       }
     },
-    [toggleNodeSelection, setCurrentNodeId, clearSelectedNodes]
+    [toggleNodeSelection, setCurrentNodeId, clearSelectedNodes, toggleGroup]
   )
 
   const lastBgClickRef = useRef(0)
@@ -135,7 +229,7 @@ const GraphMain = () => {
       const now = Date.now()
       if (event && now - lastBgClickRef.current < 400) {
         lastBgClickRef.current = 0
-        if (canCreate && graphRef.current && containerRef.current) {
+        if (canCreate && mode !== 'overview' && graphRef.current && containerRef.current) {
           const rect = containerRef.current.getBoundingClientRect()
           const sx = event.clientX - rect.left
           const sy = event.clientY - rect.top
@@ -166,7 +260,8 @@ const GraphMain = () => {
       clearSelectedNodes,
       clearSelectedEdges,
       setCurrentEdgeId,
-      canCreate
+      canCreate,
+      mode
     ]
   )
 
@@ -331,17 +426,41 @@ const GraphMain = () => {
         nodes={displayed.nodes}
         edges={displayed.edges}
         onNodeClick={handleNodeClick}
-        onNodeRightClick={onNodeContextMenu}
-        onEdgeRightClick={onEdgeContextMenu}
-        onBackgroundRightClick={onBackgroundContextMenu}
+        onNodeRightClick={mode === 'overview' ? undefined : onNodeContextMenu}
+        onEdgeRightClick={mode === 'overview' ? undefined : onEdgeContextMenu}
+        onBackgroundRightClick={mode === 'overview' ? undefined : onBackgroundContextMenu}
         onBackgroundClick={stableBackgroundClick}
         showLabels={true}
         showIcons={true}
         onGraphRef={handleGraphRef}
-        enableNodeDrag={canEdit && !shiftHeld}
-        allowLasso
+        enableNodeDrag={mode !== 'overview' && canEdit && !shiftHeld}
+        allowLasso={mode !== 'overview'}
         sketchId={sketchId}
-        linkCreation={linkCreationProp}
+        presentationOnly={mode === 'overview'}
+        linkCreation={mode === 'overview' ? undefined : linkCreationProp}
+      />
+      <InfrastructureTools
+        nodes={filteredNodes}
+        edges={filteredEdges}
+        selectedIds={selection}
+        mode={mode}
+        onMode={(value) => (value === 'focus' ? focusSelection() : setMode(value))}
+        grouping={grouping}
+        onGrouping={setGrouping}
+        groups={overview.groups}
+        expanded={expandedGroups}
+        onToggleGroup={toggleGroup}
+        onFocus={focusSelection}
+        onExpand={loadNeighbors}
+        loading={loadingNeighbors}
+        status={
+          scopeStatus +
+          (mode === 'focus' && neighborhood.truncated ? ' Display capped at 500 entities.' : '')
+        }
+        onInspect={(id) => {
+          setMode('graph')
+          setCurrentNodeId(id)
+        }}
       />
       <QuickAddOverlay
         active={quickAdd.active}
@@ -358,9 +477,7 @@ const GraphMain = () => {
         <NodeContextMenu {...nodeMenu} onRequestParams={setPendingLaunch} />
       )}
       {edgeMenu && <EdgeContextMenu {...edgeMenu} />}
-      {(background || (nodeMenu && selectedNodes.length > 0)) && (
-        <BackgroundContextMenu {...background} onRequestParams={setPendingLaunch} />
-      )}
+      {background && <BackgroundContextMenu {...background} onRequestParams={setPendingLaunch} />}
       <EnricherParamsSheet
         pending={pendingLaunch}
         onOpenChange={(open) => !open && setPendingLaunch(null)}

@@ -93,3 +93,18 @@ it('keeps the persisted identity and version when replacing a newly added node',
   expect(saved.nodesMapping.has('temporary')).toBe(false)
   expect(saved.edges[0].source).toBe('persisted')
 })
+
+it('includes every selected relationship in chains, cycles and shared endpoints', () => {
+  const nodes = ['a', 'b', 'c', 'isolated', 'outside'].map(makeNode)
+  const store = useGraphStore.getState()
+  store.updateGraphData(nodes, [
+    edge('a', 'b'),
+    edge('b', 'c'),
+    edge('c', 'a'),
+    edge('c', 'outside')
+  ])
+  store.setSelectedNodes(nodes.slice(0, 4))
+  const context = useGraphStore.getState().selectedNodesWithEdgesAsList
+  expect(context.filter((item) => item.type === 'relation')).toHaveLength(3)
+  expect(context.filter((item) => item.type === 'node')).toMatchObject([{ nodeLabel: 'isolated' }])
+})

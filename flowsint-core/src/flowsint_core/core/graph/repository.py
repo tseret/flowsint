@@ -606,9 +606,7 @@ class Neo4jGraphRepository:
         )
         return result[0]["deleted_count"] if result else 0
 
-    def get_sketch_graph(
-        self, sketch_id: str, limit: int = 100000
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    def get_sketch_graph(self, sketch_id: str, limit: int = 100000) -> Dict[str, Any]:
         """
         Get all nodes and edges for a sketch.
 
@@ -630,15 +628,18 @@ class Neo4jGraphRepository:
         WITH n
         WHERE n IS NOT NULL
         RETURN elementId(n) as id, labels(n) as labels, properties(n) as data
+        ORDER BY elementId(n)
         LIMIT $limit
         """
         nodes_result = self._connection.query(
-            nodes_query, {"sketch_id": sketch_id, "limit": limit}
+            nodes_query, {"sketch_id": sketch_id, "limit": limit + 1}
         )
 
         if not nodes_result:
             return {"nodes": [], "edges": []}
 
+        truncated = len(nodes_result) > limit
+        nodes_result = nodes_result[:limit]
         node_ids = [record["id"] for record in nodes_result]
         # Get all edges between these nodes
         rels_query = """
@@ -651,7 +652,104 @@ class Neo4jGraphRepository:
                elementId(b) as target, properties(r) as data
         """
         rels_result = self._connection.query(rels_query, {"node_ids": node_ids})
-        return {"nodes": nodes_result, "edges": rels_result or []}
+        return {
+            "nodes": nodes_result,
+            "edges": rels_result or [],
+            "truncated": truncated,
+        }
+
+    def get_graph_slice(
+        self,
+        sketch_id: str,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        limit: int = 150,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Bound materialization, including dense relationships, before serialization."""
+        if not 1 <= limit <= 2000 or offset < 0 or len(center_ids or []) > 100:
+            raise ValueError(
+                "Graph slice requires 1–2000 entities and at most 100 centers"
+            )
+        if not self._connection:
+            return {
+                "nodes": [],
+                "edges": [],
+                "total_nodes": 0,
+                "total_edges": 0,
+                "truncated": False,
+            }
+        params = {
+            "sketch_id": sketch_id,
+            "centers": center_ids or [],
+            "search": (search or "").lower()[:200],
+            "limit": limit + 1,
+            "offset": offset,
+        }
+        counts = self._connection.query(
+            """
+            MATCH (n) WHERE n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+            RETURN count(n) AS total_nodes
+        """,
+            params,
+        )
+        total_nodes = counts[0]["total_nodes"] if counts else 0
+        counts = self._connection.query(
+            """
+            MATCH (a)-[r]->(b)
+            WHERE a.sketch_id = $sketch_id AND b.sketch_id = $sketch_id
+              AND a.deleted_at IS NULL AND b.deleted_at IS NULL AND r.deleted_at IS NULL
+            RETURN count(r) AS total_edges
+        """,
+            params,
+        )
+        total_edges = counts[0]["total_edges"] if counts else 0
+        nodes = (
+            self._connection.query(
+                """
+            MATCH (n) WHERE n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+            AND ($search = '' OR toLower(coalesce(n.nodeLabel, '')) CONTAINS $search
+                 OR toLower(coalesce(n.nodeType, '')) CONTAINS $search)
+            AND (size($centers) = 0 OR elementId(n) IN $centers OR EXISTS {
+                MATCH (n)-[r]-(c) WHERE elementId(c) IN $centers
+                AND c.sketch_id = $sketch_id AND c.deleted_at IS NULL AND r.deleted_at IS NULL
+            })
+            RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS data
+            ORDER BY CASE WHEN elementId(n) IN $centers THEN 0 ELSE 1 END, elementId(n)
+            SKIP $offset LIMIT $limit
+        """,
+                params,
+            )
+            or []
+        )
+        more_nodes = len(nodes) > limit
+        nodes = nodes[:limit]
+        ids = [n["id"] for n in nodes]
+        edge_limit = 10000
+        edges = (
+            self._connection.query(
+                """
+            UNWIND $ids AS id MATCH (a)-[r]->(b)
+            WHERE elementId(a) = id AND elementId(b) IN $ids AND r.deleted_at IS NULL
+            RETURN elementId(r) AS id, type(r) AS type, elementId(a) AS source,
+                   elementId(b) AS target, properties(r) AS data
+            ORDER BY elementId(r) LIMIT $edge_limit
+        """,
+                {"ids": ids, "edge_limit": edge_limit + 1},
+            )
+            if ids
+            else []
+        )
+        edges = edges or []
+        return {
+            "nodes": nodes,
+            "edges": edges[:edge_limit],
+            "total_nodes": total_nodes,
+            "total_edges": total_edges,
+            "truncated": more_nodes
+            or len(nodes) < total_nodes
+            or len(edges) > edge_limit,
+        }
 
     def update_relationship(
         self, element_id: str, rel_obj: GraphDict, sketch_id: str

@@ -17,6 +17,7 @@ import { CopyButton } from '../copy'
 import { GraphNode } from '@/types'
 import { formatDistanceToNow } from 'date-fns'
 import { usePermissions } from '@/hooks/use-can'
+import { formatEvidenceValue } from '@/lib/evidence-display'
 
 export type RelationshipType = {
   source: GraphNode
@@ -70,7 +71,7 @@ const NodeItem = memo(function NodeItem({
   const formatNodeData = useCallback((data: any) => {
     if (!data) return ''
     const entries = Object.entries(data)
-      .map(([key, value]) => `${key}:${value ? value : 'N/A'}`)
+      .map(([key, value]) => `${key}: ${formatEvidenceValue(value)}`)
       .join(', ')
     return entries
   }, [])

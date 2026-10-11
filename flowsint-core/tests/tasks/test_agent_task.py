@@ -1,5 +1,6 @@
 """Autonomous agent loop: passive dispatch, cancellation, citations, failures."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -80,7 +81,7 @@ def env(db_session, monkeypatch):
     monkeypatch.setattr(
         agent,
         "create_graph_service",
-        lambda **kw: SimpleNamespace(get_sketch_graph=lambda: state.graph),
+        lambda **kw: SimpleNamespace(get_graph_slice=lambda **kw: state.graph),
     )
     monkeypatch.setattr(
         agent.ENRICHER_REGISTRY,
@@ -238,7 +239,7 @@ def test_cancel_while_writing_report_never_publishes(env):
     env.provider = Provider([ENRICH, cancel_then_report])
     run = _execute(env)
     assert run.status == "cancelled"
-    assert run.report is None
+    assert run.report.startswith("Partial evidence summary")
     assert env.session.query(CaseItem).count() == 0
 
 
@@ -247,7 +248,7 @@ def test_foreign_report_citation_fails_run(env):
     foreign = str(uuid4())
     env.provider = Provider([ENRICH, _report(env, foreign), _report(env, foreign)])
     run = _execute(env)
-    assert run.status == "failed"
+    assert run.status == "report_pending"
     assert "unknown scans" in run.error
     assert env.session.query(CaseItem).count() == 0
 
@@ -273,3 +274,60 @@ def test_stalled_scan_is_recorded_as_timeout_and_loop_continues(env, monkeypatch
     assert run.status == "completed", run.error
     assert run.steps[0]["outcome"] == "timeout"
     assert isinstance(UUID(run.steps[0]["scan_id"]), UUID)
+
+
+def test_report_timeout_retries_then_preserves_summary_for_report_only_recovery(env):
+    env.start(max_steps=1)
+
+    def timeout():
+        raise asyncio.TimeoutError
+
+    env.provider = Provider([ENRICH, timeout, timeout])
+    run = _execute(env)
+    assert run.status == "report_pending"
+    assert env.provider.calls == 3
+    assert "Partial evidence summary" in run.report
+    assert run.steps[0]["scan_id"] in run.report
+    run.status = "reporting"
+    env.session.commit()
+    env.provider = Provider([lambda: _report(env)])
+    agent.run_investigation_agent.apply(
+        args=[str(run.id)], kwargs={"report_only": True}, throw=True
+    )
+    run = env.session.get(AgentRun, env.run_id, populate_existing=True)
+    assert run.status == "completed", run.error
+    assert env.dispatched == [("run_enricher", "domain_to_whois")]
+    assert env.provider.calls == 1
+
+
+def test_provider_quota_blocks_all_lookups_using_same_key(env, monkeypatch):
+    monkeypatch.setattr(
+        agent.ENRICHER_REGISTRY,
+        "list",
+        lambda: [
+            {
+                "name": "domain_to_whois",
+                "inputs": {"type": "Domain"},
+                "provider": "registry",
+            },
+            {
+                "name": "domain_to_root_domain",
+                "inputs": {"type": "Domain"},
+                "provider": "registry",
+            },
+        ],
+    )
+    env.start(max_steps=4)
+
+    def quota():
+        scan = env.session.query(Scan).one()
+        scan.summary = {"outcome": "partial", "errors": [{"message": "HTTP 429"}]}
+        env.session.commit()
+
+    env.on_dispatch = quota
+    env.provider = Provider([ENRICH, lambda: _report(env)])
+    run = _execute(env)
+    assert run.status == "completed", run.error
+    assert len(env.dispatched) == 1
+    assert run.steps[0]["provider_block_reason"]
+    assert run.steps[0]["provider_ids"] == ["registry"]

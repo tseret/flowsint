@@ -46,7 +46,8 @@ build-dev:
 # Build only; starting the matching stack is an explicit deployment action.
 .PHONY: build-local config-local
 build-local:
-	$(COMPOSE_BUILD) build api app
+	$(COMPOSE_BUILD) build api
+	$(COMPOSE_BUILD) build app
 
 config-local:
 	$(COMPOSE_BUILD) config --quiet

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 import { GraphNode, type GraphViewerRef } from '@/types'
 
 interface MinimapCanvasProps {
@@ -8,6 +8,8 @@ interface MinimapCanvasProps {
   graphRef: React.RefObject<GraphViewerRef>
   canvasWidth: number
   canvasHeight: number
+  viewportRevision: number
+  positionRevision: number
 }
 
 const MinimapCanvas = ({
@@ -16,40 +18,36 @@ const MinimapCanvas = ({
   height = 120,
   graphRef,
   canvasWidth,
-  canvasHeight
+  canvasHeight,
+  viewportRevision,
+  positionRevision
 }: MinimapCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const animationFrameRef = useRef<number | null>(null)
+
+  const bounds = useMemo(() => {
+    // The renderer mutates coordinates in place when a layout settles.
+    void positionRevision
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity
+    for (const node of nodes) {
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue
+      minX = Math.min(minX, node.x)
+      minY = Math.min(minY, node.y)
+      maxX = Math.max(maxX, node.x)
+      maxY = Math.max(maxY, node.y)
+    }
+    return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null
+  }, [nodes, positionRevision])
 
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
-
-    // Calculate bounding box of all nodes
-    const getBounds = () => {
-      const validNodes = nodes.filter((n) => typeof n.x === 'number' && typeof n.y === 'number')
-      if (validNodes.length === 0) return null
-
-      let minX = Infinity,
-        minY = Infinity,
-        maxX = -Infinity,
-        maxY = -Infinity
-
-      for (const node of validNodes) {
-        if (node.x && node.x < minX) minX = node.x
-        if (node.x && node.x > maxX) maxX = node.x
-        if (node.y && node.y < minY) minY = node.y
-        if (node.y && node.y > maxY) maxY = node.y
-      }
-
-      return { minX, minY, maxX, maxY }
-    }
-
     const renderMinimap = () => {
       if (!graphRef.current) return
 
-      const bounds = getBounds()
       if (!bounds) return
 
       const { minX, minY, maxX, maxY } = bounds
@@ -148,20 +146,9 @@ const MinimapCanvas = ({
       }
     }
 
-    // Render loop
-    const animate = () => {
-      renderMinimap()
-      animationFrameRef.current = requestAnimationFrame(animate)
-    }
-
-    animate()
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-      }
-    }
-  }, [nodes, width, height, graphRef, canvasWidth, canvasHeight])
+    const frame = requestAnimationFrame(renderMinimap)
+    return () => cancelAnimationFrame(frame)
+  }, [nodes, bounds, width, height, graphRef, canvasWidth, canvasHeight, viewportRevision])
 
   return (
     <div

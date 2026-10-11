@@ -284,6 +284,43 @@ class InMemoryGraphRepository:
 
         return {"nodes": nodes, "edges": edges}
 
+    def get_graph_slice(
+        self,
+        sketch_id: str,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        limit: int = 150,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        graph = self.get_sketch_graph(sketch_id)
+        centers = set(center_ids or [])
+        neighbors = set(centers)
+        for edge in graph["edges"]:
+            if edge["source"] in centers or edge["target"] in centers:
+                neighbors.update((edge["source"], edge["target"]))
+        query = (search or "").lower()
+        nodes = [
+            n
+            for n in graph["nodes"]
+            if (not centers or n["id"] in neighbors)
+            and (
+                not query
+                or query in str(n["data"].get("nodeLabel", "")).lower()
+                or query in str(n["data"].get("nodeType", "")).lower()
+            )
+        ]
+        nodes.sort(key=lambda n: (n["id"] not in centers, n["id"]))
+        nodes = nodes[offset : offset + limit]
+        ids = {n["id"] for n in nodes}
+        edges = [e for e in graph["edges"] if e["source"] in ids and e["target"] in ids]
+        return {
+            "nodes": nodes,
+            "edges": edges[:10000],
+            "total_nodes": len(graph["nodes"]),
+            "total_edges": len(graph["edges"]),
+            "truncated": len(nodes) < len(graph["nodes"]) or len(edges) > 10000,
+        }
+
     def get_neighbors(self, node_id: str, sketch_id: str) -> Dict[str, Any]:
         """Get a node and all its direct relationships."""
         if node_id not in self._nodes:

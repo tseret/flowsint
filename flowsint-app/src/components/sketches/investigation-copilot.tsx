@@ -24,8 +24,8 @@ import {
 import { ToolbarButton } from './toolbar'
 import { CopilotCandidates } from './copilot-candidates'
 
-const ACTIVE = ['running', 'publishing']
-const UNDOABLE = ['completed', 'failed', 'cancelled', 'undone']
+const ACTIVE = ['running', 'reporting', 'publishing']
+const UNDOABLE = ['completed', 'failed', 'report_pending', 'cancelled', 'undone']
 
 export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
   const { canEdit } = usePermissions()
@@ -94,6 +94,21 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
       queryClient.setQueryData(latestKey, created)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to start the agent')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function retryReport() {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await copilotService.retryReport(run.id)
+      queryClient.setQueryData(['copilot', 'agent', run.id], updated)
+      queryClient.setQueryData(latestKey, updated)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to retry the report')
     } finally {
       setBusy(false)
     }
@@ -237,13 +252,33 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                     ? 'Waiting for an agent worker. The run starts when one is available.'
                     : run.status === 'running'
                       ? `Running · step ${run.steps.length} of ${run.max_steps}`
-                      : run.status === 'publishing'
-                        ? 'Writing the report and draft findings…'
-                        : `Agent ${run.status} after ${run.steps.length} steps`}
+                      : run.status === 'report_pending'
+                        ? 'Collection ended; report pending. Saved evidence is available below.'
+                        : run.status === 'reporting'
+                          ? 'Synthesizing saved evidence…'
+                          : run.status === 'publishing'
+                            ? 'Writing the report and draft findings…'
+                            : `Agent ${run.status} after ${run.steps.length} steps`}
                 </p>
                 {run.status === 'running' && (
                   <Button variant="outline" size="sm" onClick={cancel} disabled={!canEdit || busy}>
-                    Cancel
+                    Stop collection
+                  </Button>
+                )}
+                {(run.status === 'running' || run.status === 'cancelled') && (
+                  <p className="text-sm text-muted-foreground">
+                    Stopping prevents further steps. Enrichments already queued or running may
+                    finish and add evidence.
+                  </p>
+                )}
+                {['report_pending', 'failed'].includes(run.status) && !run.finding_ids.length && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={retryReport}
+                    disabled={!canEdit || busy || !subscribed}
+                  >
+                    Retry report from saved evidence
                   </Button>
                 )}
                 {UNDOABLE.includes(run.status) && (
@@ -263,6 +298,11 @@ export function InvestigationCopilot({ sketchId }: { sketchId: string }) {
                       {step.output_count !== undefined && ` ${step.output_count} results`}
                     </p>
                     <p>{step.reason}</p>
+                    {step.provider_block_reason && (
+                      <p className="text-amber-700 dark:text-amber-400">
+                        {step.provider_block_reason}
+                      </p>
+                    )}
                     <ul className="list-disc pl-4 break-all text-muted-foreground">
                       {step.node_ids.map((id) => (
                         <li key={id}>{nodes.get(id)?.nodeLabel ?? id}</li>

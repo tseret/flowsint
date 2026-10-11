@@ -81,7 +81,15 @@ const LaunchEnricherOrFlowPanel = memo(
       enrichers?.filter((enricher: Enricher) => {
         if (!enrichersSearchQuery.trim()) return true
         const query = enrichersSearchQuery.toLowerCase().trim()
-        const matchesName = enricher.name?.toLowerCase().includes(query)
+        const matchesName = [
+          enricher.name,
+          enricher.display_name,
+          enricher.purpose,
+          enricher.provider
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
         const matchesDescription = enricher.description?.toLowerCase().includes(query)
         return matchesName || matchesDescription
       }) || []
@@ -261,7 +269,7 @@ const LaunchEnricherOrFlowPanel = memo(
                                   }
                                 />
                                 <CardTitle className="text-base flex items-center gap-1.5">
-                                  {enricher.name}
+                                  {enricher.display_name || enricher.name}
                                   {enricher.params_schema?.length ? (
                                     <span title="Requires configuration">
                                       <Settings className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -276,6 +284,20 @@ const LaunchEnricherOrFlowPanel = memo(
                                 </CardDescription>
                               )}
                               <div className="text-xs pl-7 space-y-1 text-muted-foreground">
+                                <p>
+                                  {enricher.provider || 'Provider not specified'} ·{' '}
+                                  {enricher.passive === true
+                                    ? 'Passive lookup'
+                                    : enricher.passive === false
+                                      ? 'Contacts target infrastructure'
+                                      : 'Behavior not reviewed'}
+                                </p>
+                                <p>
+                                  {enricher.freshness}
+                                  {enricher.max_results
+                                    ? ` · Up to ${enricher.max_results} results`
+                                    : ''}
+                                </p>
                                 {readiness.data?.[enricher.name] ? (
                                   <>
                                     <p>

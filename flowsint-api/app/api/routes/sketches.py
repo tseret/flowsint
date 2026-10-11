@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -46,6 +47,31 @@ class NodeData(BaseModel):
 
     class Config:
         extra = "allow"
+
+
+class TelemetryImport(BaseModel):
+    content: str = Field(max_length=2 * 1024 * 1024, min_length=1)
+    format: Literal["normalized", "dns", "proxy", "zeek", "suricata", "cloudtrail"]
+    execute: bool = False
+
+
+@router.post("/{sketch_id}/import/telemetry")
+def import_telemetry(
+    sketch_id: UUID,
+    body: TelemetryImport,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> Any:
+    try:
+        return create_sketch_service(db).import_telemetry(
+            sketch_id, current_user.id, body.content, body.format, body.execute
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Sketch not found")
+    except PermissionDeniedError:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 class NodeDeleteInput(BaseModel):
@@ -196,13 +222,25 @@ def delete_sketch(
 async def get_sketch_nodes(
     sketch_id: str,
     format: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    center_ids: List[str] | None = Query(default=None, max_length=100),
+    search: str | None = Query(default=None, max_length=200),
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
 ) -> Any:
     """Get the nodes and edges for a sketch."""
     service = create_sketch_service(db)
     try:
-        return service.get_graph(UUID(sketch_id), current_user.id, format)
+        return service.get_graph(
+            UUID(sketch_id),
+            current_user.id,
+            format,
+            limit=limit,
+            center_ids=center_ids,
+            search=search,
+            offset=offset,
+        )
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Graph not found")
     except PermissionDeniedError:

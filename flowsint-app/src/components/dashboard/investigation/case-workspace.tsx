@@ -6,6 +6,7 @@ import { usePermissions } from '@/hooks/use-can'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import { EvidenceCard } from '@/components/sketches/evidence-card'
 import {
   FingerprintImportButton,
   isFingerprintFinding
@@ -140,15 +141,13 @@ export function CaseWorkspace({
               ` · assigned to ${collaborators.data?.find((c) => c.user_id === item.assignee_id)?.user?.email ?? item.assignee_id}`}
           </div>
           <p className="whitespace-pre-wrap">{item.body}</p>
-          {item.target_id && (
-            <p className="break-all text-xs">
-              {item.target_kind}: {item.target_id}
-            </p>
-          )}
           {item.evidence && (
-            <p className="whitespace-pre-wrap text-sm">
-              <strong>Evidence:</strong> {item.evidence}
-            </p>
+            <EvidenceCard
+              evidence={item.evidence}
+              targetId={item.target_kind === 'entity' ? item.target_id : null}
+              sketchId={item.sketch_id}
+              investigationId={investigationId}
+            />
           )}
           {item.assessment && (
             <p className="whitespace-pre-wrap text-sm">

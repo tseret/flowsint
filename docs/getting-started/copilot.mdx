@@ -100,3 +100,18 @@ The agent has no tools for arbitrary code, shell, Cypher or URL execution.
 Provider and graph text is treated as evidence, not as instructions. Each step
 is revalidated against the allowlist and restricted to compatible entities in the
 same sketch; the agent never reruns an enricher on the same entity.
+# Report recovery and provider limits
+
+If final synthesis times out or produces an invalid report, the run keeps a
+cited partial summary and enters **Report pending**. The run owner can choose
+**Retry report only** to synthesize saved evidence without launching enrichment
+again. Failed runs without published findings also support this retry. The
+subscription account and model are checked again before queuing it.
+
+Quota and credential failures block further actions against the same provider
+within that run. A later run may try the provider again. Stopping a run prevents
+new actions; an already dispatched scan may still finish.
+
+The model sees bounded graph relationships and observations, including explicit
+loaded/total counts and truncation. Continue to review evidence and draft
+findings before accepting conclusions.

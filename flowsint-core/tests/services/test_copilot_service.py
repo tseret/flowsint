@@ -9,6 +9,7 @@ from flowsint_core.core.enricher_base import build_params_model
 from flowsint_core.core.graph.types import GraphData, GraphEdge, GraphNode, NodeMetadata
 from flowsint_core.core.llm.types import MessageRole
 from flowsint_core.core.services.copilot_service import (
+    PASSIVE_LIMITS,
     PASSIVE_PARAMS,
     AgentDecision,
     AgentFinding,
@@ -32,6 +33,7 @@ def test_passive_params_validate_against_enricher_schemas() -> None:
     load_all_enrichers()
     schemas = {e["name"]: e["params_schema"] for e in ENRICHER_REGISTRY.list()}
     for name, params in PASSIVE_PARAMS.items():
+        assert all(isinstance(value, str) for value in params.values())
         build_params_model(schemas[name]).model_validate(params)
 
 
@@ -510,3 +512,130 @@ def test_recorded_ssh_fingerprint_is_visible_without_existing_peer_paths():
         )["services"]
         == []
     )
+
+
+def test_graph_context_contains_relationship_evidence_with_credentials_redacted():
+    from flowsint_core.core.graph.types import GraphData, GraphEdge
+
+    graph = GraphData(
+        nodes=[_node("a"), _node("b")],
+        edges=[
+            GraphEdge(
+                id="ab",
+                source="a",
+                target="b",
+                label="RESOLVES_TO",
+                observations=[
+                    {
+                        "provider": "passive_dns",
+                        "observed_at": "2026-01-01",
+                        "api_key": "secret",
+                    }
+                ],
+            )
+        ],
+    )
+    observation = graph_observation(graph, {"a"}, set())
+    edge = observation["relationships"][0]
+    assert (edge["source"], edge["target"], edge["relationship"]) == (
+        "a",
+        "b",
+        "RESOLVES_TO",
+    )
+    assert edge["evidence"]["observations"] == [
+        {"provider": "passive_dns", "observed_at": "2026-01-01"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "issue, expected",
+    [
+        ({"outcome": "quota_exceeded"}, "allowance"),
+        (
+            {"outcome": "partial", "errors": [{"message": "usage limit exceeded"}]},
+            "allowance",
+        ),
+        ({"errors": [{"message": "HTTP 403"}]}, "credentials"),
+        ({"outcome": "missing_credentials"}, "credentials"),
+        ({"outcome": "no_matches"}, None),
+        ({"errors": [{"message": "Connection timed out"}]}, None),
+    ],
+)
+def test_provider_failure_classification(issue, expected):
+    from flowsint_core.core.services.copilot_service import provider_block_reason
+
+    reason = provider_block_reason(issue)
+    assert (expected in reason) if expected else reason is None
+
+
+@pytest.mark.parametrize(
+    "name, input_type",
+    [
+        ("domain_to_certificates_ct", "domain"),
+        ("certificate_to_domains", "sslcertificate"),
+        ("domain_to_dns_dependencies_virustotal", "domain"),
+        ("cidr_to_routing_history_ripestat", "cidr"),
+    ],
+)
+def test_reviewed_infrastructure_pivots_have_enforced_single_input_budgets(
+    name, input_type
+):
+    load_all_enrichers()
+    nodes = [
+        {"id": "one", "nodeType": input_type},
+        {"id": "two", "nodeType": input_type},
+    ]
+    catalog = eligible_catalog(ENRICHER_REGISTRY.list(), nodes, {"VT_API_KEY"})
+    item = next(item for item in catalog if item["enricher"] == name)
+    assert item["max_inputs"] == 1
+    assert item["max_outputs"] == PASSIVE_LIMITS[name][1]
+    decision = AgentDecision(
+        action="enrich", enricher=name, node_ids=["one"], reason="Review evidence"
+    )
+    assert validate_decision(
+        decision, uuid4(), "Map infrastructure", catalog, set()
+    ).node_ids == ["one"]
+    decision.node_ids = ["one", "two"]
+    with pytest.raises(ValueError, match="at most 1"):
+        validate_decision(decision, uuid4(), "Map infrastructure", catalog, set())
+    prompt = json.loads(decision_messages("Map", {}, [item], [], 2)[1].content)
+    assert prompt["available_lookups"][0]["max_inputs"] == 1
+    assert prompt["available_lookups"][0]["max_outputs"] == PASSIVE_LIMITS[name][1]
+
+
+def test_passive_flag_alone_never_authorizes_an_enricher_and_dns_needs_vault_key():
+    metadata = [
+        {"name": "unreviewed_lookup", "inputs": {"type": "Domain"}, "passive": True},
+        {"name": "domain_to_dns_dependencies_virustotal", "inputs": {"type": "Domain"}},
+    ]
+    catalog = eligible_catalog(metadata, [{"id": "one", "nodeType": "domain"}], set())
+    assert len(catalog) == 1
+    assert catalog[0]["missing_keys"] == ["VT_API_KEY"]
+
+
+def test_graph_observation_retains_slice_totals_and_discloses_evidence_omission():
+    graph = GraphData(
+        nodes=[_node("one"), _node("two")],
+        edges=[
+            GraphEdge(
+                id="edge",
+                source="one",
+                target="two",
+                label="R",
+                observations=[{"scan_id": str(i)} for i in range(4)],
+            )
+        ],
+        total_nodes=20000,
+        total_edges=50000,
+        truncated=True,
+    )
+    observation = graph_observation(graph, {"one"}, set())
+    assert (observation["entity_count"], observation["edge_count"]) == (20000, 50000)
+    assert (
+        observation["shown_entity_count"],
+        observation["shown_relationship_count"],
+    ) == (2, 1)
+    assert observation["truncated"]
+    assert observation["relationships"][0]["evidence_truncated"]
+    graph.total_nodes, graph.total_edges, graph.truncated = 2, 1, False
+    assert graph_observation(graph, {"one"}, set())["truncated"]

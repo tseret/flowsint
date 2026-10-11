@@ -136,9 +136,10 @@ const computeSelectedNodesWithEdgesAsList = (
 ): ChatContextFormat[] => {
   const context: ChatContextFormat[] = []
   const remaining = new Map(selectedNodes.map((node) => [node.id, node]))
+  const selected = new Map(remaining)
   edgesMapping.forEach((edge) => {
-    const fromNode = remaining.get(edge.source)
-    const toNode = remaining.get(edge.target)
+    const fromNode = selected.get(edge.source)
+    const toNode = selected.get(edge.target)
     if (fromNode && toNode) {
       context.push({
         type: 'relation',

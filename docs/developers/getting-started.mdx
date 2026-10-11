@@ -16,3 +16,23 @@ Your contribution to Flowsint is highly encouraged !
 You can create your own [Types](/docs/developers/managing-types), [Tools](/docs/developers/managing-tools), [Enrichers](/docs/developers/managing-enrichers) and Flows, and sharing them by proposing [pull requests](https://github.com/reconurge/flowsint/pulls).
 
 Before diving in, you may also want to understand the [Graph format](/docs/developers/graph-format) to learn how nodes and edges are structured in the frontend visualization.
+
+## Verification commands
+
+Run Python suites with `make test` (use `uv run` for focused pytest targets).
+Frontend checks from `flowsint-app` are `npm test`, `npm run build`,
+`npm run typecheck`, and `npm run lint:check`. Python formatting/linting uses
+`uv run ruff format --check flowsint-api flowsint-core flowsint-enrichers flowsint-types`
+and `uv run ruff check flowsint-api flowsint-core flowsint-enrichers flowsint-types`.
+
+Run the infrastructure helper benchmark from `flowsint-app` with
+`npx vitest run src/lib/infrastructure-analysis.bench.test.ts`. It covers synthetic
+1k/10k/100k entity graphs: aggregation, focus, host/date comparison, and layout
+application. It measures CPU helpers, not browser rendering or Neo4j throughput;
+there is no machine-dependent timing pass threshold.
+
+Types are discovered at startup and expose Pydantic JSON schemas at runtime;
+there is no generated schema file to commit for `RoutingObservation`. Frontend
+route generation uses the existing `make regenerate-router` target when routes
+change. Build local backend and frontend images sequentially (`make build-local`)
+and verify changes in the existing local stack without starting a second database.

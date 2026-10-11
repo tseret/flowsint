@@ -145,7 +145,15 @@ export default function RelationshipsTable() {
   } = useQuery({
     queryKey: ['graph', 'relationships_view', sketchId],
     enabled: Boolean(sketchId),
-    queryFn: () => sketchService.getGraphDataById(sketchId as string, true)
+    queryFn: async () => {
+      const graph = await sketchService.getGraphDataById(sketchId)
+      const nodes = new Map(graph.nds.map((node) => [node.id, node]))
+      return graph.rls.flatMap((edge) => {
+        const source = nodes.get(edge.source),
+          target = nodes.get(edge.target)
+        return source && target ? [{ source, target, edge }] : []
+      })
+    }
   })
 
   const { canEdit } = usePermissions()
@@ -350,7 +358,7 @@ export default function RelationshipsTable() {
           <div>
             <h3 className="text-lg font-semibold">No relationships found</h3>
             <p className="text-muted-foreground">
-              This sketch doesn&apos;t have any relationships yet.
+              No relationships in the loaded graph slice. Use graph search to explore further.
             </p>
           </div>
         </div>
@@ -365,12 +373,12 @@ export default function RelationshipsTable() {
         <div className="space-y-1">
           <h2 className="text-2xl font-bold tracking-tight">Relationships</h2>
           <p className="text-muted-foreground">
-            {filteredRelationships.length} of {relationships.length} relationships
+            {filteredRelationships.length} of {relationships.length} loaded relationships
           </p>
         </div>
         <Badge variant="secondary" className="flex items-center gap-2">
           <Users className="h-4 w-4" />
-          {relationships.length} total
+          {relationships.length} loaded
         </Badge>
       </div>
 

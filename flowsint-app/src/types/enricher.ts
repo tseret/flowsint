@@ -26,6 +26,12 @@ export interface EnricherParamSchemaItem {
 }
 
 export interface Enricher {
+  display_name?: string
+  purpose?: string
+  provider?: string
+  passive?: boolean | null
+  freshness?: string
+  max_results?: number | null
   id: string
   class_name: string
   category: string

@@ -47,6 +47,57 @@ Save a named view to retain filters, positions, and display mode. Named views ar
 personal to this account and sketch in this browser; they are not shared views
 and do not transfer automatically to another browser.
 
+## Large infrastructure investigations
+
+The initial graph loads at most 2,000 entities and 10,000 relationships. The
+**Loaded** row shows the full sketch counts and explicitly marks partial graphs.
+Expand that row to search the entire sketch by entity label or type; select a
+result to load up to 500 entities in its immediate neighborhood. Existing
+positions are retained. The relationship table also uses a bounded slice.
+
+Choose **Infrastructure** in the graph toolbar to aggregate loaded entities by
+recorded ASN, prefix, or domain relationships. Groups show entity, host, and
+flagged counts; expand a group to inspect its members. Aggregate nodes are
+presentation-only and cannot be edited or enriched. Group membership is not
+proof of common ownership. **Focus selection** shows a bounded neighborhood;
+**Load neighbors** retrieves additional stored neighbors from the server.
+
+Select 2–12 IP/domain entities and choose **Compare hosts** to compare observed
+ports, transports, fingerprints, providers, and observation times. **Compare
+dates** compares relationships with observations on two UTC calendar dates.
+Both use the loaded, filtered graph. Records without a valid observation date
+or an explicit timestamp timezone are excluded (date-only records are accepted).
+These are recorded-evidence comparisons,
+not reconstructed historical snapshots; an unobserved relationship is not
+evidence that it did not exist.
+
+Findings now expose evidence cards with run outcomes, provider details, source
+references, timestamps, and inspectable raw observations. Select **View linked
+entity** to retrieve the stored entity without needing it on the canvas.
+
+## Internal telemetry
+
+Choose **Import telemetry**, select a format, and paste JSON/NDJSON or choose a
+local file. **Preview** validates the entire batch before **Import** is enabled.
+Supported formats are normalized records, DNS, proxy, Zeek JSON (connection/DNS),
+Suricata EVE (DNS/flow/HTTP), and CloudTrail JSON (`Records` arrays are accepted).
+Unsupported record types reject the batch with a record index. Limit: 2 MiB,
+1,000 records, and 2,000 resulting relationships per import.
+
+For example, a normalized record is:
+
+```json
+{"source":"192.0.2.10","target":"example.org","relationship":"QUERIED_DOMAIN","timestamp":"2026-10-11T12:00:00Z"}
+```
+
+Timestamps must include a timezone (Zeek epoch timestamps are also supported).
+Entities may be strings or explicit `{ "type": "ip", "label": "192.0.2.10" }`
+objects; supported explicit types are `ip`, `domain`, `website`, and `phrase`.
+Imports retain source-record references and observation times on relationships.
+The importer discards unrelated fields and URL credentials, query strings, and
+fragments. It makes no external requests. Preview performs no graph writes;
+import requires edit permission and writes the validated batch transactionally.
+
 ## Concurrent editing and setup
 
 Entity and analysis saves check the version you originally read. If another

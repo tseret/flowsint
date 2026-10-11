@@ -24,6 +24,9 @@ export interface Sketch {
 export interface SketchGraphData {
   nds: GraphNode[]
   rls: GraphEdge[]
+  total_nodes?: number | null
+  total_edges?: number | null
+  truncated?: boolean
 }
 
 export interface DetectionResult {
