@@ -22,9 +22,12 @@ async function getGraphDataById(
   sketchId: string,
   inline: boolean = false
 ): Promise<SketchGraphData | RelationshipType[]> {
-  return fetchWithAuth(`/api/sketches/${sketchId}/graph?format=${inline ? 'inline' : ''}`, {
-    method: 'GET'
-  })
+  return fetchWithAuth(
+    `/api/sketches/${sketchId}/graph?${inline ? 'format=inline' : 'limit=2000'}`,
+    {
+      method: 'GET'
+    }
+  )
 }
 
 export const sketchService = {
@@ -39,6 +42,16 @@ export const sketchService = {
     })
   },
   getGraphDataById,
+  getGraphSlice: async (
+    sketchId: string,
+    options: { center_ids?: string[]; search?: string; limit?: number; offset?: number } = {}
+  ): Promise<SketchGraphData> => {
+    const query = new URLSearchParams({ limit: String(options.limit ?? 500) })
+    options.center_ids?.forEach((id) => query.append('center_ids', id))
+    if (options.search) query.set('search', options.search)
+    if (options.offset) query.set('offset', String(options.offset))
+    return fetchWithAuth(`/api/sketches/${sketchId}/graph?${query}`)
+  },
   // Backend returns the created sketch on success, or an { error } payload
   // instead of a 4xx/5xx status on failure — callers branch on `id`.
   create: async (body: BodyInit): Promise<Sketch | { error: string }> => {
@@ -82,7 +95,10 @@ export const sketchService = {
       body: body
     })
   },
-  updateNode: async (sketchId: string, body: BodyInit): Promise<{ status: string }> => {
+  updateNode: async (
+    sketchId: string,
+    body: BodyInit
+  ): Promise<{ status: string; node: { id: string; version: number } }> => {
     return fetchWithAuth(`/api/sketches/${sketchId}/nodes/edit`, {
       method: 'PUT',
       body: body

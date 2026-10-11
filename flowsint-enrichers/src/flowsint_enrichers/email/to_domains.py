@@ -1,13 +1,12 @@
 import os
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from dotenv import load_dotenv
 from tools.network.whoxy import WhoxyTool
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
-from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.address import Location
 from flowsint_types.domain import Domain
@@ -27,21 +26,6 @@ class EmailToDomainsEnricher(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Email
     OutputType = Domain
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault: Optional[VaultProtocol] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def required_params(cls) -> bool:
@@ -66,10 +50,6 @@ class EmailToDomainsEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Email"
-
-    @classmethod
-    def key(cls) -> str:
-        return "email"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find domains related to emails using whoxy api."""

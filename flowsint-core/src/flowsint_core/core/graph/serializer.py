@@ -5,6 +5,8 @@ This module provides utilities for serializing complex Python objects
 into Neo4j-compatible primitive types, following the Single Responsibility Principle.
 """
 
+import hashlib
+import json
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, ValidationError
@@ -25,6 +27,37 @@ class GraphSerializer:
     This class is responsible for converting Pydantic models, nested objects,
     and other complex types into primitive types that can be stored in Neo4j.
     """
+
+    @staticmethod
+    def identity_properties(entity: FlowsintType) -> Dict[str, Any]:
+        if entity.__class__.__name__.lower() == "sslcertificate":
+            for field in ("fingerprint_sha256", "fingerprint_sha1"):
+                fingerprint = getattr(entity, field, None)
+                if fingerprint:
+                    return {field: str(fingerprint).replace(":", "").lower()}
+            if entity.issuer and entity.serial_number:
+                return {"issuer": entity.issuer, "serial_number": entity.serial_number}
+        if entity.__class__.__name__.lower() == "port":
+            return {
+                "host": getattr(entity, "host", None),
+                "number": entity.number,
+                "protocol": (getattr(entity, "protocol", None) or "tcp").lower(),
+            }
+        primary = {
+            name: getattr(entity, name)
+            for name, field in type(entity).model_fields.items()
+            if isinstance(field.json_schema_extra, dict)
+            and field.json_schema_extra.get("primary")
+        }
+        # Types without a declared primary value retain their established label identity.
+        return primary or {"nodeLabel": entity.nodeLabel}
+
+    @staticmethod
+    def canonical_key(entity: FlowsintType) -> str:
+        identity = GraphSerializer.identity_properties(entity)
+        return hashlib.sha256(
+            json.dumps(identity, sort_keys=True, default=str).encode()
+        ).hexdigest()
 
     @staticmethod
     def _clean_empty_values(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -127,6 +160,7 @@ class GraphSerializer:
             nodeIcon=node_dict.get("nodeIcon"),
             nodeFlag=node_dict.get("nodeFlag"),
             nodeShape=node_dict.get("nodeShape"),
+            version=node_dict.get("version", 0),
             x=node_dict.get("x"),
             y=node_dict.get("y"),
             nodeProperties=entity,
@@ -152,7 +186,10 @@ class GraphSerializer:
             nodeProperties=entity,
             nodeMetadata=NodeMetadata(),
         )
-        return GraphSerializer.graph_node_to_neo4j_dict(graph_node)
+        serialized = GraphSerializer.graph_node_to_neo4j_dict(graph_node)
+        serialized.pop("x", None)
+        serialized.pop("y", None)
+        return serialized
 
     @staticmethod
     def graph_node_to_neo4j_dict(node: GraphNode) -> Dict[str, Any]:
@@ -178,6 +215,10 @@ class GraphSerializer:
         neo4j_dict_flatten.pop(
             "nodeProperties.nodeLabel", None
         )  # remove nodeLabel from original pydantic
+        if isinstance(node_properties, FlowsintType):
+            neo4j_dict_flatten["nodeKey"] = GraphSerializer.canonical_key(
+                node_properties
+            )
         return neo4j_dict_flatten
 
     @staticmethod
@@ -188,6 +229,11 @@ class GraphSerializer:
             source=str(edge_dict.get("source")),
             target=str(edge_dict.get("target")),
             label=str(edge_dict.get("type")),
+            caption=(edge_dict.get("data") or {}).get("caption"),
+            observations=[
+                json.loads(value)
+                for value in (edge_dict.get("data") or {}).get("observations", [])
+            ],
         )
 
     @staticmethod
@@ -217,6 +263,14 @@ class GraphSerializer:
             "to_type": to_type,
             "to_label": to_obj.nodeLabel,
             "rel_label": label,
+            "from_key": GraphSerializer.canonical_key(
+                from_obj
+                if isinstance(from_obj, FlowsintType)
+                else from_obj.nodeProperties
+            ),
+            "to_key": GraphSerializer.canonical_key(
+                to_obj if isinstance(to_obj, FlowsintType) else to_obj.nodeProperties
+            ),
         }
 
     @staticmethod
@@ -231,11 +285,6 @@ class GraphSerializer:
             )
             for node_dict in node_dicts
         ]
-
-    @staticmethod
-    def serialize_nodes(nodes: List[GraphNode]) -> List[Dict[str, Any]]:
-        """Convert a list of Neo4j node records to GraphNode instances."""
-        return [GraphSerializer.graph_node_to_neo4j_dict(node) for node in nodes]
 
     @staticmethod
     def serialize_flowsint_types(nodes: List[FlowsintType]) -> List[Dict[str, Any]]:

@@ -4,6 +4,7 @@ import type { GraphForceSettings } from '@/stores/graph-settings-store'
 import { CONSTANTS, GRAPH_COLORS, tempPos, tempDimensions } from '../utils/constants'
 import { getNodeEdgeDistance } from '../node/node-renderer'
 import { RenderContext, isEdgeInViewport } from '../utils/render-context'
+import { edgeDisplayLabel } from '@/lib/graph-presentation'
 
 interface LinkRenderParams {
   // LinkObject<GraphNode, GraphEdge> is what <ForceGraph2D<GraphNode,
@@ -194,10 +195,11 @@ export const renderLink = ({
     ctx.restore()
   }
 
-  if (!link.label) return
+  const label = edgeDisplayLabel(link)
+  if (!label) return
 
   // Label (only for highlighted links when zoomed in)
-  if (isHighlighted && globalScale > CONSTANTS.ZOOM_EDGE_DETAIL_THRESHOLD) {
+  if ((isHighlighted || !!link.caption) && globalScale > CONSTANTS.ZOOM_EDGE_DETAIL_THRESHOLD) {
     let textAngle: number
     if (isCurved) {
       const t = 0.5
@@ -230,7 +232,7 @@ export const renderLink = ({
     ctx.font = `${linkFontSize}px Sans-Serif`
 
     // Single measureText call — reuse metrics for both width and vertical positioning
-    const metrics = ctx.measureText(link.label)
+    const metrics = ctx.measureText(label)
     const textWidth = metrics.width
     const padding = linkFontSize * CONSTANTS.PADDING_RATIO
     tempDimensions[0] = textWidth + padding
@@ -264,7 +266,7 @@ export const renderLink = ({
     const labelTextY =
       metrics.actualBoundingBoxAscent * 0.5 - metrics.actualBoundingBoxDescent * 0.5
 
-    ctx.fillText(link.label, 0, labelTextY)
+    ctx.fillText(label, 0, labelTextY)
     ctx.restore()
   }
 }

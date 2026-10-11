@@ -16,23 +16,6 @@ class DomainToDnsEnricher(Enricher):
     InputType = Domain
     OutputType = Ip
 
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-            **kwargs,
-        )
-
     @classmethod
     def name(cls) -> str:
         return "domain_to_dns"
@@ -40,10 +23,6 @@ class DomainToDnsEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Domain"
-
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
@@ -110,7 +89,9 @@ class DomainToDnsEnricher(Enricher):
         return results
 
     def postprocess(
-        self, results: List[OutputType], original_input: List[InputType] = None
+        self,
+        results: List[OutputType],
+        original_input: Optional[List[InputType]] = None,
     ) -> List[OutputType]:
         for ip_obj in results:
             if not self._graph_service:

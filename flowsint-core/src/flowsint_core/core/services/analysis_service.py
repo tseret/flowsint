@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from ..models import Analysis
 from ..repositories import AnalysisRepository, InvestigationRepository
 from .base import BaseService
-from .exceptions import NotFoundError
+from .collaboration_service import CollaborationService
+from .exceptions import ConflictError, DatabaseError, NotFoundError
 
 
 class AnalysisService(BaseService):
@@ -24,8 +27,8 @@ class AnalysisService(BaseService):
         db: Session,
         analysis_repo: AnalysisRepository,
         investigation_repo: InvestigationRepository,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(db, **kwargs)
         self._analysis_repo = analysis_repo
         self._investigation_repo = investigation_repo
@@ -68,6 +71,13 @@ class AnalysisService(BaseService):
             last_updated_at=datetime.now(timezone.utc),
         )
         self._analysis_repo.add(new_analysis)
+        CollaborationService(self.db).record(
+            investigation_id,
+            owner_id,
+            "analysis created",
+            new_analysis.id,
+            {"title": title},
+        )
         self._commit()
         self._refresh(new_analysis)
         return new_analysis
@@ -80,12 +90,17 @@ class AnalysisService(BaseService):
         description: Optional[str] = None,
         content: Optional[Dict[str, Any]] = None,
         investigation_id: Optional[UUID] = None,
+        version: Optional[int] = None,
     ) -> Analysis:
         analysis = self._analysis_repo.get_by_id(analysis_id)
         if not analysis:
             raise NotFoundError("Analysis not found")
 
         self._check_permission(user_id, analysis.investigation_id, ["update"])
+        if version is None or analysis.version != version:
+            raise ConflictError(
+                "This analysis changed. Reload before saving; your edits were not applied."
+            )
 
         if title is not None:
             analysis.title = title
@@ -98,7 +113,23 @@ class AnalysisService(BaseService):
             analysis.investigation_id = investigation_id
 
         analysis.last_updated_at = datetime.now(timezone.utc)
-        self._commit()
+        CollaborationService(self.db).record(
+            analysis.investigation_id,
+            user_id,
+            "analysis updated",
+            analysis.id,
+            {"title": analysis.title},
+        )
+        try:
+            self.db.commit()
+        except StaleDataError:
+            self.db.rollback()
+            raise ConflictError(
+                "This analysis changed. Reload before saving; your edits were not applied."
+            )
+        except SQLAlchemyError as exc:
+            self.db.rollback()
+            raise DatabaseError(f"Database error: {exc}")
         self._refresh(analysis)
         return analysis
 
@@ -110,6 +141,13 @@ class AnalysisService(BaseService):
         self._check_permission(user_id, analysis.investigation_id, ["delete"])
 
         self._analysis_repo.delete(analysis)
+        CollaborationService(self.db).record(
+            analysis.investigation_id,
+            user_id,
+            "analysis deleted",
+            analysis.id,
+            {"title": analysis.title},
+        )
         self._commit()
 
 

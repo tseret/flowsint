@@ -81,6 +81,9 @@ services:
       - AUTH_SECRET=${AUTH_SECRET}
       - MASTER_VAULT_KEY_V1=${MASTER_VAULT_KEY_V1}
       - REDIS_URL=redis://redis:6379/0
+      - LLM_PROVIDER=${LLM_PROVIDER:-mistral}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,7 +99,7 @@ services:
     networks:
       - flowsint_network
 
-  celery:
+  celery: &celery
     image: ghcr.io/reconurge/flowsint-api:${FLOWSINT_VERSION:-latest}
     container_name: flowsint-celery-prod
     restart: always
@@ -121,6 +124,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SKIP_MIGRATIONS=true
       - AUTH_SECRET=${AUTH_SECRET}
+      - LLM_PROVIDER=${LLM_PROVIDER:-mistral}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-}
     healthcheck:
       # Celery has no HTTP server — Dockerfile's curl-based healthcheck always fails.
       # Use celery's own ping primitive instead.
@@ -140,6 +146,22 @@ services:
         condition: service_healthy
     networks:
       - flowsint_network
+
+  celery-agents:
+    <<: *celery
+    container_name: flowsint-celery-agents-prod
+    command:
+      [
+        "celery",
+        "-A",
+        "flowsint_core.core.celery",
+        "worker",
+        "--loglevel=info",
+        "--pool=threads",
+        "--concurrency=4",
+        "-Q",
+        "agents",
+      ]
 
   app:
     # Frontend bundle uses same-origin relative URLs; nginx inside the image

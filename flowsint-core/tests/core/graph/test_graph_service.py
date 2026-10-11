@@ -59,6 +59,24 @@ class TestGraphServiceInit:
 
 
 class TestCreateNode:
+    def test_browser_node_uses_the_same_identity_as_enriched_entities(self):
+        from flowsint_core.core.graph import GraphSerializer
+
+        repository = MagicMock()
+        node = GraphNode(
+            id=None,
+            nodeLabel="Analyst label",
+            nodeType="domain",
+            nodeProperties={"domain": "example.com"},
+            nodeMetadata=NodeMetadata(),
+        )
+        GraphService("sketch-1", repository).create_node(node)
+        properties = repository.create_node.call_args.kwargs["node_obj"]
+        assert properties["nodeKey"] == GraphSerializer.canonical_key(
+            Domain(domain="example.com")
+        )
+        assert properties["nodeLabel"] == "Analyst label"
+
     def test_create_node_with_graph_node(self):
         """Test creating a node with injected mock repository."""
         mock_repo = MagicMock()
@@ -164,6 +182,47 @@ class TestCreateNodeFromFlowsintType:
         service.create_node_from_flowsint_type(domain)
 
         mock_repo.add_to_batch.assert_called_once()
+
+
+class TestProvenance:
+    def test_enricher_run_keeps_seed_provenance_and_stamps_new_nodes(self):
+        repo = InMemoryGraphRepository()
+        manual = GraphService(
+            sketch_id="sketch-1", repository=repo, provenance={"origin": "manual"}
+        )
+        enricher = GraphService(
+            sketch_id="sketch-1",
+            repository=repo,
+            provenance={
+                "origin": "enricher",
+                "created_by_scan": "scan-1",
+                "created_by_enricher": "domain_to_ip",
+            },
+        )
+        # Client-supplied metadata cannot forge provenance.
+        manual.create_node(
+            GraphNode(
+                id="1",
+                nodeLabel="example.com",
+                nodeType="domain",
+                nodeProperties=Domain(domain="example.com"),
+                nodeMetadata=NodeMetadata(created_by_scan="forged"),
+            )
+        )
+        # Enrichers re-create their input node, then create discoveries.
+        enricher.create_node_from_flowsint_type(Domain(domain="example.com"))
+        enricher.create_node_from_flowsint_type(Ip(address="1.1.1.1"))
+
+        meta = {n.nodeLabel: n.nodeMetadata for n in manual.get_sketch_graph().nodes}
+        assert (meta["example.com"].origin, meta["example.com"].created_by_scan) == (
+            "manual",
+            None,
+        )
+        assert (
+            meta["1.1.1.1"].origin,
+            meta["1.1.1.1"].created_by_scan,
+            meta["1.1.1.1"].created_by_enricher,
+        ) == ("enricher", "scan-1", "domain_to_ip")
 
 
 class TestGetSketchGraph:

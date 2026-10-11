@@ -125,6 +125,28 @@ class TestBuildNodeQuery:
         assert params["props"] == node_obj
         assert "created_at" in params
 
+    def test_build_node_query_keeps_creation_props_out_of_update(self):
+        repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+        node_obj = {
+            "nodeLabel": "example.com",
+            "nodeType": "domain",
+            "nodeMetadata.created_at": "2020-01-01T00:00:00",
+            "nodeMetadata.origin": "enricher",
+            "nodeMetadata.created_by_scan": "scan-1",
+            "nodeMetadata.created_by_enricher": "domain_to_ip",
+        }
+
+        _, params = repo._build_node_query(node_obj, sketch_id="sketch-1")
+
+        # Only applied ON CREATE: a re-created node keeps its first provenance.
+        assert params["props"] == {"nodeLabel": "example.com", "nodeType": "domain"}
+        assert params["create_only"] == {
+            "nodeMetadata.created_at": params["created_at"],
+            "nodeMetadata.origin": "enricher",
+            "nodeMetadata.created_by_scan": "scan-1",
+            "nodeMetadata.created_by_enricher": "domain_to_ip",
+        }
+
 
 class TestBuildRelationshipQuery:
     def test_build_relationship_query_structure(self):
@@ -402,6 +424,31 @@ class TestBatchCreateEdgesByElementId:
 
 
 class TestUpdateNode:
+    def test_stale_version_raises_conflict_without_overwriting(self):
+        from flowsint_core.core.graph.types import NodeVersionConflict
+
+        connection = MagicMock()
+        connection.query.side_effect = [[], [{"id": "elem-1"}]]
+        repo = Neo4jGraphRepository(neo4j_connection=connection)
+        with pytest.raises(NodeVersionConflict):
+            repo.update_node(
+                "elem-1", {"nodeLabel": "stale", "version": 99}, "sketch-1", 2
+            )
+        query, params = connection.query.call_args_list[0].args
+        assert params["expected_version"] == 2
+        assert params["check_version"] is True
+        assert "version" not in params["props"]
+        assert query.index("SET n.version = coalesce") < query.index("WITH n")
+
+    def test_legacy_update_keeps_all_query_parameters(self):
+        connection = MagicMock()
+        connection.query.return_value = [{"id": "elem-1"}]
+        repo = Neo4jGraphRepository(neo4j_connection=connection)
+        assert repo.update_node("elem-1", {"nodeLabel": "new"}, "sketch-1") == "elem-1"
+        params = connection.query.call_args.args[1]
+        assert params["expected_version"] == -1
+        assert params["check_version"] is False
+
     def test_update_node_success(self):
         mock_connection = MagicMock()
         mock_connection.query.return_value = [{"id": "elem-1"}]
@@ -648,6 +695,7 @@ class TestGetNodesByIds:
         result = repo.get_nodes_by_ids(["id-1", "id-2"], sketch_id="sketch-1")
 
         assert len(result) == 2
+        assert "elementId(n) AS id" in mock_connection.query.call_args.args[0]
 
     def test_get_nodes_by_ids_no_connection(self):
         repo = repo_without_connection()
@@ -867,3 +915,97 @@ class TestContextManager:
         # Should have cleared, not flushed
         mock_connection.execute_batch.assert_not_called()
         assert len(repo._batch_operations) == 0
+
+
+def test_relationship_observation_appends_without_overwriting_previous_runs():
+    import json
+
+    repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+    observation = {"provider": "example", "scan_id": "run-1"}
+    query, params = repo._build_relationship_query(
+        {
+            "from_type": "domain",
+            "from_label": "example.com",
+            "to_type": "ip",
+            "to_label": "1.1.1.1",
+            "rel_label": "RESOLVES_TO",
+            "observation": observation,
+        },
+        "sketch",
+    )
+    assert json.loads(params["observation"]) == observation
+    assert "observation" not in params["props"]
+    assert "coalesce(r.observations, []) + [$observation]" in query
+
+
+def test_legacy_port_adoption_requires_matching_host_and_protocol():
+    from flowsint_core.core.graph.serializer import GraphSerializer
+    from flowsint_types import Port
+
+    repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+    query, params = repo._build_node_query(
+        GraphSerializer.flowsint_type_to_neo4j_dict(
+            Port(host="1.1.1.1", number=443, protocol="tcp")
+        ),
+        "sketch",
+    )
+    assert params["legacy_identity"] == {
+        "nodeProperties.host": "1.1.1.1",
+        "nodeProperties.number": 443,
+        "nodeProperties.protocol": "tcp",
+    }
+    assert "legacy[key] = $legacy_identity[key]" in query
+
+
+def test_legacy_identity_uses_neo4j_compatible_values():
+    from flowsint_core.core.graph.serializer import GraphSerializer
+    from flowsint_types import CIDR
+
+    repo = Neo4jGraphRepository(neo4j_connection=MagicMock())
+    _, params = repo._build_node_query(
+        GraphSerializer.flowsint_type_to_neo4j_dict(CIDR(network="1.2.3.0/24")),
+        "sketch",
+    )
+    assert params["legacy_identity"] == {"nodeProperties.network": "1.2.3.0/24"}
+
+
+def test_growth_budget_stops_before_queuing_extra_new_entity():
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    connection.query.side_effect = [[{"existing": True}], [], []]
+    repository = Neo4jGraphRepository(connection)
+    repository.max_new_entities = 1
+
+    def node(key):
+        return {"nodeKey": key, "nodeLabel": key, "nodeType": "domain"}
+
+    repository.add_to_batch("node", node_obj=node("existing"), sketch_id="s")
+    repository.add_to_batch("node", node_obj=node("new"), sketch_id="s")
+    repository.add_to_batch("node", node_obj=node("new"), sketch_id="s")
+    with pytest.raises(ValueError, match="growth budget"):
+        repository.add_to_batch("node", node_obj=node("excess"), sketch_id="s")
+    assert repository.new_entity_count == 1
+    assert len(repository._batch_operations) == 3
+
+
+def test_growth_budget_uses_label_identity_when_node_key_is_absent():
+    connection = MagicMock()
+    connection.query.return_value = []
+    repository = Neo4jGraphRepository(connection)
+    repository.max_new_entities = 1
+    repository.add_to_batch(
+        "node",
+        node_obj={"nodeLabel": "first.example", "nodeType": "domain"},
+        sketch_id="s",
+    )
+    with pytest.raises(ValueError, match="growth budget"):
+        repository.add_to_batch(
+            "node",
+            node_obj={"nodeLabel": "second.example", "nodeType": "domain"},
+            sketch_id="s",
+        )
+    assert repository.new_entity_count == 1
+    assert len(repository._batch_operations) == 1
+    assert connection.query.call_args_list[0].args[1]["node_key"] == "first.example"
+    assert connection.query.call_args_list[1].args[1]["node_key"] == "second.example"

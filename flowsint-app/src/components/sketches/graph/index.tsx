@@ -17,7 +17,8 @@ import {
   preloadExternalImage,
   preloadFlagImage
 } from './utils/image-cache'
-import { renderNode } from './node/node-renderer'
+import { renderNode, getNodeDisplayBounds } from './node/node-renderer'
+import { fitGraphViewport } from './utils/fit-graph'
 import { useKeyboardEvents } from './hooks/use-keyboard-events'
 import { renderLink } from './edge/link-renderer'
 import { createRenderContext, RenderContext } from './utils/render-context'
@@ -34,6 +35,8 @@ import { GraphLoadingOverlay } from './components/graph-loading-overlay'
 import { GraphSelectorOverlay } from './components/graph-selector-overlay'
 import { LinkCreationCanvas } from './components/link-creation-overlay'
 import MinimapCanvas from './components/minimap'
+import { DiscoveryWaveLegend } from './components/discovery-wave-legend'
+import { computeDiscoveryWaves, waveColor } from './utils/discovery-waves'
 import { Background } from './background'
 import { BackgroundVariant } from './background/background-types'
 import { Maximize } from 'lucide-react'
@@ -56,6 +59,7 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   instanceId,
   allowLasso = false,
   sketchId,
+  presentationOnly = false,
   allowForces = false,
   autoZoomOnNode = true,
   showMinimalControls = false,
@@ -63,6 +67,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   enableNodeDrag: enableNodeDragProp = true,
   linkCreation: linkCreationProp
 }) => {
+  const [viewportRevision, setViewportRevision] = useState(0)
+  const [positionRevision, setPositionRevision] = useState(0)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   const graphRef = useRef<GraphViewerRef>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -76,7 +82,13 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     }
   })
 
-  const { saveAllNodePositions } = useSaveNodePositions(sketchId)
+  const { saveAllNodePositions: persistNodePositions } = useSaveNodePositions(sketchId)
+  const saveAllNodePositions = useCallback(
+    (nodes: GraphNode[], force = false) => {
+      if (!presentationOnly) persistNodePositions(nodes, force)
+    },
+    [presentationOnly, persistNodePositions]
+  )
 
   const isSelectorModeActive = useGraphControls((s) => s.isSelectorModeActive)
   const selectionMode = useGraphControls((s) => s.selectionMode)
@@ -105,6 +117,24 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   )
   const forceSettings = useGraphSettingsStore((s) => s.forceSettings)
   const setImportModalOpen = useGraphSettingsStore((s) => s.setImportModalOpen)
+  // Depth comes from the unfiltered sketch so filtering never renumbers it.
+  const allNodes = useGraphStore((s) => s.nodes)
+  const allEdges = useGraphStore((s) => s.edges)
+  // Only the sketch graph (it has a sketchId) gets depth rings: a subgraph such as the neighbors
+  // preview has other seeds, so its numbering would disagree with the main graph.
+  const showDiscoveryWaves =
+    (forceSettings.showDiscoveryWaves?.value ?? true) && !!sketchId && !presentationOnly
+  const discoveryWaves = useMemo(
+    () => (showDiscoveryWaves ? computeDiscoveryWaves(allNodes, allEdges) : null),
+    [showDiscoveryWaves, allNodes, allEdges]
+  )
+  // Turning the rings off removes the legend, the only control that can undo a depth filter.
+  const hasHiddenWaves = useGraphStore((s) => s.filters.hiddenWaves.length > 0)
+  const setFilters = useGraphStore((s) => s.setFilters)
+  useEffect(() => {
+    if (sketchId && !showDiscoveryWaves && hasHiddenWaves)
+      setFilters({ ...useGraphStore.getState().filters, hiddenWaves: [] })
+  }, [sketchId, showDiscoveryWaves, hasHiddenWaves, setFilters])
 
   const {
     currentNodeId,
@@ -130,6 +160,7 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     }))
   )
 
+  const changes = useGraphStore((s) => s.changes)
   const { theme } = useTheme()
 
   const selectedNodeIds = useMemo(() => new Set(selectedNodes.map((n) => n.id)), [selectedNodes])
@@ -232,12 +263,42 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     return transformGraphData({ nodes, edges, nodeColors })
   }, [nodes, edges, nodeColors])
 
+  const measureContext = useRef<CanvasRenderingContext2D | null>(null)
+  const handleZoomToFitLocal = useCallback(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    if (!presentationOnly) {
+      graph.zoomToFit(400)
+      return
+    }
+    measureContext.current ??= document.createElement('canvas').getContext('2d')
+    const ctx = measureContext.current
+    if (!ctx) return
+    const view = fitGraphViewport(
+      graphData.nodes,
+      containerSize.width,
+      containerSize.height,
+      (node, zoom) => getNodeDisplayBounds(node, ctx, forceSettings, zoom, showLabels)
+    )
+    if (view) {
+      graph.centerAt(view.x, view.y, 400)
+      graph.zoom(view.zoom, 400)
+    }
+  }, [presentationOnly, graphData, containerSize, forceSettings, showLabels])
+
+  useEffect(() => {
+    if (!presentationOnly) return
+    const frame = requestAnimationFrame(handleZoomToFitLocal)
+    return () => cancelAnimationFrame(frame)
+  }, [presentationOnly, handleZoomToFitLocal])
+
   const { isRegeneratingLayout, regenerateLayout } = useGraphLayout({
     forceSettings,
     containerSize,
     saveAllNodePositions,
     graphRef,
-    graphData
+    graphData,
+    fitToView: handleZoomToFitLocal
   })
 
   const wrappedRegenerateLayout = useCallback(
@@ -293,15 +354,21 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     if (hoverHighlightNodes.size > 0) return hoverHighlightNodes
     const merged = new Set<string>(currentNodeHighlights.nodes)
     pathHighlightNodes.forEach((id) => merged.add(id))
+    changes?.addedNodes.forEach((id) => merged.add(id))
+    changes?.updatedNodes.forEach((id) => merged.add(id))
     return merged
-  }, [hoverHighlightNodes, currentNodeHighlights.nodes, pathHighlightNodes])
+  }, [hoverHighlightNodes, currentNodeHighlights.nodes, pathHighlightNodes, changes])
 
   const highlightLinks = useMemo(() => {
     if (hoverHighlightLinks.size > 0) return hoverHighlightLinks
     const merged = new Set<string>(currentNodeHighlights.links)
     pathHighlightLinks.forEach((id) => merged.add(id))
+    const changedEdges = new Set([...(changes?.addedEdges || []), ...(changes?.updatedEdges || [])])
+    edges.forEach((edge) => {
+      if (changedEdges.has(edge.id)) merged.add(`${edge.source}-${edge.target}`)
+    })
     return merged
-  }, [hoverHighlightLinks, currentNodeHighlights.links, pathHighlightLinks])
+  }, [hoverHighlightLinks, currentNodeHighlights.links, pathHighlightLinks, changes, edges])
 
   const { tooltip, showTooltip, hideTooltip } = useTooltip(graphRef)
 
@@ -353,23 +420,18 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
   const hasPerformedInitialZoom = useRef(false)
 
   const handleEngineStop = useCallback(() => {
+    setPositionRevision((revision) => revision + 1)
     // Perform initial zoom to fit only once when graph is first rendered
     if (!hasPerformedInitialZoom.current && graphRef.current) {
       hasPerformedInitialZoom.current = true
-      if (typeof graphRef.current.zoomToFit === 'function') {
-        graphRef.current.zoomToFit(400)
-      }
+      handleZoomToFitLocal()
     }
-  }, [])
+  }, [handleZoomToFitLocal])
 
   // reset hasPerformedInitialZoom on sketch change
   useEffect(() => {
     if (hasPerformedInitialZoom.current) hasPerformedInitialZoom.current = false
   }, [sketchId])
-
-  const handleZoomToFitLocal = useCallback(() => {
-    graphRef.current?.zoomToFit(400)
-  }, [])
 
   useGraphInitialization({
     graphRef,
@@ -377,7 +439,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
     setActions,
     onGraphRef,
     selectedNodeIdsRef,
-    regenerateLayout: wrappedRegenerateLayout
+    regenerateLayout: wrappedRegenerateLayout,
+    fitToView: handleZoomToFitLocal
   })
 
   // Clear highlights when graph data changes
@@ -457,7 +520,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
         highlightNodes,
         highlightLinks,
         hoverNode,
-        rc
+        rc,
+        waveColor: discoveryWaves ? waveColor(discoveryWaves.waveOf.get(node.id) ?? 0) : undefined
       })
     },
     [
@@ -470,7 +534,8 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
       highlightNodes,
       highlightLinks,
       hoverNode,
-      getOrCreateRC
+      getOrCreateRC,
+      discoveryWaves
     ]
   )
 
@@ -502,13 +567,17 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
 
   if (!nodes.length) {
     return (
-      <div ref={containerRef} className={'h-full'} style={style}>
+      <div ref={containerRef} className={'relative h-full'} style={style}>
         <GraphEmptyState
           onOpenAddDialog={handleOpenNewAddItemDialog}
           onOpenImportDialog={handleOpenImportDialog}
           className={className}
           style={style}
         />
+        {/* Filters can hide every node; keep the legend so hidden depths can be shown again */}
+        {discoveryWaves && discoveryWaves.waves.length > 0 && (
+          <DiscoveryWaveLegend waves={discoveryWaves.waves} />
+        )}
       </div>
     )
   }
@@ -548,19 +617,20 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
         height={containerSize.height}
         graphData={graphData}
         maxZoom={CONSTANTS.MAX_ZOOM}
-        minZoom={CONSTANTS.MIN_ZOOM}
+        minZoom={presentationOnly ? 0.001 : CONSTANTS.MIN_ZOOM}
         nodeLabel={() => ''}
         nodeRelSize={3}
         onNodeRightClick={handleNodeRightClick}
         onNodeClick={handleNodeClick}
         onBackgroundClick={handleBackgroundClick}
         onBackgroundRightClick={handleBackgroundRightClick}
-        onLinkClick={handleEdgeClick}
+        onLinkClick={presentationOnly ? undefined : handleEdgeClick}
         onLinkRightClick={handleEdgeRightClick}
         linkCurvature={(link) => link.curvature || 0}
         nodeCanvasObject={renderNodeCallback}
         onNodeDragEnd={wrappedHandleNodeDragEnd}
         onEngineStop={handleEngineStop}
+        onZoomEnd={() => setViewportRevision((revision) => revision + 1)}
         cooldownTicks={allowForces ? forceSettings.cooldownTicks.value : 0}
         cooldownTime={forceSettings.cooldownTime.value}
         d3AlphaDecay={forceSettings.d3AlphaDecay.value}
@@ -601,7 +671,12 @@ const GraphViewer: React.FC<GraphViewerProps> = ({
           graphRef={graphRef}
           canvasWidth={containerSize.width}
           canvasHeight={containerSize.height}
+          viewportRevision={viewportRevision}
+          positionRevision={positionRevision}
         />
+      )}
+      {discoveryWaves && discoveryWaves.waves.length > 0 && (
+        <DiscoveryWaveLegend waves={discoveryWaves.waves} />
       )}
       {showMinimalControls && (
         <div className="absolute top-1 right-1">

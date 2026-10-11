@@ -27,10 +27,6 @@ class WhoisEnricher(Enricher):
     def category(cls) -> str:
         return "Domain"
 
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
-
     # noqa false positive below: OutputType is a class attr, resolves fine at def-time
     async def scan(self, data: List[InputType]) -> List[OutputType]:  # noqa: F821
         results: List[OutputType] = []  # noqa: F821

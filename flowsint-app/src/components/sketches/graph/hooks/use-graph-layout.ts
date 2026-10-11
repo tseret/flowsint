@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useLayout } from '@/hooks/use-layout'
 import type { GraphNode, GraphViewerRef } from '@/types'
 import type { GraphForceSettings } from '@/stores/graph-settings-store'
@@ -10,6 +10,7 @@ interface UseGraphLayoutParams {
   saveAllNodePositions: (nodes: GraphNode[]) => void
   graphRef: React.RefObject<GraphViewerRef>
   graphData: GraphData
+  fitToView: () => void
 }
 
 export const useGraphLayout = ({
@@ -17,11 +18,13 @@ export const useGraphLayout = ({
   containerSize,
   saveAllNodePositions,
   graphRef,
-  graphData
+  graphData,
+  fitToView
 }: UseGraphLayoutParams) => {
   const [isRegeneratingLayout, setIsRegeneratingLayout] = useState(false)
+  const requestRef = useRef(0)
 
-  const { applyLayout } = useLayout({
+  const { applyLayout, cancelLayout } = useLayout({
     forceSettings,
     containerSize,
     saveAllNodePositions,
@@ -32,6 +35,7 @@ export const useGraphLayout = ({
       }
     }
   })
+  useEffect(() => () => cancelLayout(), [graphData, cancelLayout])
 
   const regenerateLayout = useCallback(
     async (layoutType: 'force' | 'hierarchy') => {
@@ -41,6 +45,7 @@ export const useGraphLayout = ({
       }
 
       setIsRegeneratingLayout(true)
+      const request = ++requestRef.current
 
       try {
         await applyLayout({
@@ -51,20 +56,21 @@ export const useGraphLayout = ({
 
         // Wait a bit for positions to be applied, then zoom to fit
         setTimeout(() => {
-          if (graphRef.current?.zoomToFit) {
-            graphRef.current.zoomToFit(400)
+          if (request === requestRef.current && graphRef.current?.zoomToFit) {
+            fitToView()
           }
         }, 100)
       } catch (error) {
-        console.error('Layout calculation failed:', error)
+        if (!(error instanceof DOMException && error.name === 'AbortError'))
+          console.error('Layout calculation failed:', error)
       } finally {
         // Keep overlay visible for smooth transition
         setTimeout(() => {
-          setIsRegeneratingLayout(false)
+          if (request === requestRef.current) setIsRegeneratingLayout(false)
         }, 600)
       }
     },
-    [applyLayout, graphRef, graphData]
+    [applyLayout, graphRef, graphData, fitToView]
   )
 
   return {

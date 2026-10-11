@@ -23,10 +23,6 @@ class IpToInfosEnricher(Enricher):
     def category(cls) -> str:
         return "Ip"
 
-    @classmethod
-    def key(cls) -> str:
-        return "address"
-
     # noqa false positive below: OutputType is a class attr, resolves fine at def-time
     async def scan(self, data: List[InputType]) -> List[OutputType]:  # noqa: F821
         results: List[OutputType] = []  # noqa: F821

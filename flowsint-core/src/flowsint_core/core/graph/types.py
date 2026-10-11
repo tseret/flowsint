@@ -5,7 +5,7 @@ This module contains Pydantic models for graph nodes, edges, and related data st
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 # from flowsint_types import FlowsintType
 from pydantic import BaseModel, Field
@@ -13,8 +13,16 @@ from pydantic import BaseModel, Field
 GraphDict = Dict[str, Any]
 
 
+class NodeVersionConflict(Exception):
+    """A node changed since the editing client read it."""
+
+
 class NodeMetadata(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
+    # Provenance, set once when the node is first created (see repository._build_node_query).
+    origin: Optional[Literal["manual", "enricher"]] = None
+    created_by_scan: Optional[str] = None
+    created_by_enricher: Optional[str] = None
 
     class Config:
         extra = "allow"
@@ -35,6 +43,7 @@ class GraphNode(BaseModel):
     nodeImage: Optional[str] = None
     nodeFlag: Optional[str] = None
     nodeShape: Optional[str] = None
+    version: int = 0
 
     nodeMetadata: NodeMetadata
     nodeProperties: Any
@@ -52,9 +61,13 @@ class GraphEdge(BaseModel):
     caption: Optional[str] = None
     type: Optional[str] = None
     weight: Optional[float] = None
+    observations: List[Dict[str, Any]] = Field(default_factory=list)
     confidence_level: Optional[Union[float, str]] = None
 
 
 class GraphData(BaseModel):
     nodes: List[GraphNode]
     edges: List[GraphEdge]
+    total_nodes: Optional[int] = None
+    total_edges: Optional[int] = None
+    truncated: bool = False

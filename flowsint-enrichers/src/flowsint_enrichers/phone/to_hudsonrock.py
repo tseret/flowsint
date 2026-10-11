@@ -24,10 +24,6 @@ class HudsonRockToPhone(Enricher):
     def category(cls) -> str:
         return "phones"
 
-    @classmethod
-    def key(cls) -> str:
-        return "number"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
 

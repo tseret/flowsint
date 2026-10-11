@@ -26,7 +26,7 @@ class TypeRegistry:
     - Lowercase name (e.g., "domain") -> Class (for Neo4j compatibility)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._types: Dict[str, Type[FlowsintType]] = {}
         self._lowercase_types: Dict[str, Type[FlowsintType]] = {}
 
@@ -84,16 +84,7 @@ class TypeRegistry:
         """
         return self._types.copy()
 
-    def all_types_lowercase(self) -> Dict[str, Type[FlowsintType]]:
-        """
-        Get all registered types with lowercase keys.
-
-        Returns:
-            Dictionary mapping lowercase names to classes
-        """
-        return self._lowercase_types.copy()
-
-    def clear(self):
+    def clear(self) -> None:
         """Clear all registered types (mainly for testing)."""
         self._types.clear()
         self._lowercase_types.clear()

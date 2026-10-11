@@ -1,16 +1,12 @@
 import json
 import shlex
-from typing import List
+from typing import List, Optional
 
 from ..dockertool import DockerTool
 
 
 class DnsxTool(DockerTool):
     image = "projectdiscovery/dnsx"
-    default_tag = "latest"
-
-    def __init__(self):
-        super().__init__(self.image, self.default_tag)
 
     @classmethod
     def name(cls) -> str:
@@ -23,9 +19,6 @@ class DnsxTool(DockerTool):
     @classmethod
     def category(cls) -> str:
         return "DNS resolution"
-
-    def install(self) -> None:
-        super().install()
 
     def version(self) -> str:
         try:
@@ -45,14 +38,9 @@ class DnsxTool(DockerTool):
         except Exception as e:
             return f"unknown (error: {str(e)})"
 
-    def update(self) -> None:
-        # Pull the latest image
-        self.install()
-
-    def is_installed(self) -> bool:
-        return super().is_installed()
-
-    def launch(self, cidr: str, ptr: bool = False, api_key: str = None) -> List[str]:
+    def launch(
+        self, cidr: str, ptr: bool = False, api_key: Optional[str] = None
+    ) -> List[str]:
         """
         Run dnsx to resolve IPs from CIDR.
 
@@ -90,7 +78,7 @@ class DnsxTool(DockerTool):
             )
 
     def resolve_domain(
-        self, domain: str, aaaa: bool = True, api_key: str = None
+        self, domain: str, aaaa: bool = True, api_key: Optional[str] = None
     ) -> List[str]:
         """
         Resolve a domain's A (IPv4) and, optionally, AAAA (IPv6) records.

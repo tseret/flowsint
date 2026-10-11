@@ -1,7 +1,9 @@
 import { fetchWithAuth } from './api'
-import type { Enricher } from '@/types/enricher'
+import type { Enricher, EnricherReadiness } from '@/types/enricher'
 
 export const enricherService = {
+  readiness: (): Promise<Record<string, EnricherReadiness>> =>
+    fetchWithAuth('/api/enrichers/readiness', { method: 'GET' }),
   get: async (type?: string): Promise<Enricher[]> => {
     const url = type ? `/api/enrichers?category=${type}` : '/api/enrichers'
     return fetchWithAuth(url, {

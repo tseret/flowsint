@@ -26,7 +26,11 @@ class GraphRepositoryProtocol(Protocol):
         ...
 
     def update_node(
-        self, element_id: str, updates: GraphDict, sketch_id: str
+        self,
+        element_id: str,
+        updates: GraphDict,
+        sketch_id: str,
+        expected_version: Optional[int] = None,
     ) -> Optional[str]:
         """Update a node by its element ID. Returns element ID."""
         ...
@@ -77,10 +81,19 @@ class GraphRepositoryProtocol(Protocol):
         ...
 
     # Graph queries
-    def get_sketch_graph(
-        self, sketch_id: str, limit: int = 100000
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    def get_sketch_graph(self, sketch_id: str, limit: int = 100000) -> Dict[str, Any]:
         """Get all nodes and edges for a sketch."""
+        ...
+
+    def get_graph_slice(
+        self,
+        sketch_id: str,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        limit: int = 150,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Get a bounded graph with completeness metadata."""
         ...
 
     def get_neighbors(self, node_id: str, sketch_id: str) -> Dict[str, Any]:
@@ -113,6 +126,10 @@ class GraphRepositoryProtocol(Protocol):
 
     def add_to_batch(self, operation_type: str, **kwargs: Any) -> None:
         """Add an operation to the batch queue."""
+        ...
+
+    def clear_batch(self) -> None:
+        """Discard pending operations after an unsuccessful run."""
         ...
 
     def flush_batch(self) -> None:

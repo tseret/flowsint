@@ -12,6 +12,7 @@ import { useGraphStore } from '@/stores/graph-store'
 import { cn } from '@/lib/utils'
 import { sketchService } from '@/api/sketch-service'
 import { GraphNode } from '@/types'
+import { toast } from 'sonner'
 
 const flagColors = {
   red: 'text-red-400 fill-red-200',
@@ -43,15 +44,16 @@ export function NodeFlag({ sketchId, node }: { sketchId: string; node: GraphNode
       const val = value === flagValue ? null : (value as flagColor)
       setFlagValue(val)
       try {
-        updateNode(nodeId, { nodeFlag: val })
         const body = JSON.stringify({
           nodeId: node.id,
+          expected_version: useGraphStore.getState().getNode(node.id)?.version ?? node.version ?? 0,
           updates: { nodeFlag: val } as Partial<GraphNode>
         })
-        await sketchService.updateNode(sketchId, body)
+        const result = await sketchService.updateNode(sketchId, body)
+        updateNode(nodeId, { nodeFlag: val, version: result.node.version })
       } catch (e) {
-        console.log(e)
-        // toast.error(e.message)
+        setFlagValue(node.nodeFlag)
+        toast.error(e instanceof Error ? e.message : 'Could not update flag')
       }
     },
     [nodeId, flagValue, updateNode, node, sketchId]

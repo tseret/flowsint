@@ -13,6 +13,9 @@ from flowsint_core.core.services import (
     NotFoundError,
     create_key_service,
 )
+from flowsint_core.core.services.chatgpt_subscription_service import (
+    ChatGPTSubscriptionService,
+)
 
 router = APIRouter()
 
@@ -20,7 +23,7 @@ router = APIRouter()
 @router.get("", response_model=List[KeyRead])
 def get_keys(
     db: Session = Depends(get_db), current_user: Profile = Depends(get_current_user)
-):
+) -> List[KeyRead]:
     service = create_key_service(db)
     keys = service.get_keys_for_user(current_user.id)
     return [
@@ -38,13 +41,18 @@ def get_keys(
 def chat_key_exists(
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> KeyExists:
     """
     A simple util route to know if any ai chat key exists in the vault for this user
     """
     service = create_key_service(db)
     try:
-        key_exists = service.chat_key_exist(current_user.id)
+        subscription = ChatGPTSubscriptionService(db).status(current_user.id)
+        key_exists = (
+            subscription["connected"]
+            if subscription["mode"] == "subscription"
+            else service.chat_key_exist(current_user.id)
+        )
         return KeyExists(exists=key_exists)
     except NotFoundError as e:
         print(e)
@@ -56,7 +64,7 @@ def get_key_by_id(
     id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> KeyRead:
     service = create_key_service(db)
     try:
         key = service.get_key_by_id(id, current_user.id)
@@ -75,7 +83,7 @@ def create_key(
     payload: KeyCreate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> KeyRead:
     service = create_key_service(db)
     try:
         key = service.create_key(payload.name, payload.key, current_user.id)
@@ -96,7 +104,7 @@ def delete_key(
     id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> None:
     service = create_key_service(db)
     try:
         service.delete_key(id, current_user.id)

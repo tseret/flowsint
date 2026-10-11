@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
+from time import monotonic
 from typing import Any, Dict, List, Optional, Type
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
@@ -7,13 +9,79 @@ from pydantic.config import ConfigDict
 from flowsint_types import FlowsintType
 
 from ..utils import resolve_type
+from .enums import EventLevel
 from .graph import GraphService, create_graph_service
-from .logger import Logger
+from .graph.repository import Neo4jGraphRepository
+from .logger import Logger, enrichment_errors
 from .vault import VaultProtocol
 
 
 class InvalidEnricherParams(Exception):
     pass
+
+
+def _observation_facts(entity: BaseModel) -> Dict[str, Any]:
+    fields = {
+        "port": ("host", "number", "protocol", "service", "version", "state"),
+        "sslcertificate": (
+            "subject",
+            "issuer",
+            "serial_number",
+            "valid_from",
+            "valid_until",
+            "is_valid",
+            "is_expired",
+            "is_self_signed",
+            "is_wildcard",
+        ),
+        "ip": ("address", "isp", "asn", "organization", "prefix", "country"),
+    }.get(type(entity).__name__.lower(), ())
+    facts: Dict[str, Any] = {}
+    for field in fields:
+        value = getattr(entity, field, None)
+        if (
+            type(value) in (bool, int)
+            or isinstance(value, str)
+            and 0 < len(value) <= 512
+        ):
+            facts["status" if field == "state" else field] = value
+    allowed_fingerprints = (
+        "banner_hash",
+        "html_hash",
+        "favicon_hash",
+        "tls_sha256",
+        "jarm",
+        "ja3s",
+        "banner_sha256",
+        "banner_sha1",
+        "banner_mmh3",
+        "http.body_sha256",
+        "http.body_sha1",
+        "http.body_mmh3",
+        "http.headers_sha256",
+        "tls.fingerprint_sha256",
+        "tls.fingerprint_sha1",
+        "tls.ja3s",
+        "tls.ja4s",
+        "tls.ja4scan_tls",
+        "tls.ja4x",
+        "tls.jarm",
+    )
+    fingerprints: Dict[str, Any] = {}
+    source = getattr(entity, "fingerprints", None)
+    if fields and isinstance(source, dict):
+        for field in allowed_fingerprints:
+            value = source.get(field)
+            if type(value) is int or isinstance(value, str) and 0 < len(value) <= 512:
+                fingerprints[field] = value
+    if type(entity).__name__.lower() == "sslcertificate":
+        for algorithm in ("sha256", "sha1"):
+            value = getattr(entity, f"fingerprint_{algorithm}", None)
+            if isinstance(value, str) and 0 < len(value) <= 512:
+                fingerprints[f"certificate_{algorithm}"] = value
+    if fingerprints:
+        facts["fingerprints"] = dict(list(fingerprints.items())[:20])
+    return facts
 
 
 def build_params_model(params_schema: list) -> Type[BaseModel]:
@@ -78,9 +146,7 @@ class Enricher(ABC):
         def category(cls):
             return "Domain"
 
-        @classmethod
-        def key(cls):
-            return "domain"
+        # key() defaults to InputType's primary field; override only if it differs.
 
         # preprocess receives a list and returns a list of validated InputType instances
         def preprocess(self, data: List) -> List[InputType]:
@@ -121,10 +187,15 @@ class Enricher(ABC):
         params: Optional[Dict[str, Any]] = None,
         graph_service: Optional[GraphService] = None,
     ):
-        self.scan_id = scan_id or "default"
+        self.scan_id = str(scan_id or "default")
+        self.execution_summary: Dict[str, Any] = {}
+        self.defer_status_until_commit = False
+        self._issues: List[Dict[str, str]] = []
         self.sketch_id = sketch_id or "system"
         self.vault = vault
-        self.params_schema = params_schema or []
+        self.params_schema = (
+            self.get_params_schema() if params_schema is None else params_schema
+        )
         self.ParamsModel = build_params_model(self.params_schema)
         self.params: Dict[str, Any] = params or {}
 
@@ -135,6 +206,12 @@ class Enricher(ABC):
             self._graph_service = create_graph_service(
                 sketch_id=self.sketch_id,
                 enable_batching=True,
+                provenance={
+                    "origin": "enricher",
+                    # Celery passes a UUID for single-enricher runs; Neo4j needs a string.
+                    "created_by_scan": str(self.scan_id),
+                    "created_by_enricher": self.name(),
+                },
             )
 
         # Params is filled synchronously by the constructor. This params is generally constructed of
@@ -153,9 +230,13 @@ class Enricher(ABC):
             validated = self.ParamsModel(**resolved_params)
             self.params = validated.model_dump()
         except ValidationError as e:
-            raise InvalidEnricherParams(
-                f"Enricher '{self.name()}' received invalid parameters: {e}"
+            fields = ", ".join(
+                f"{'.'.join(map(str, error['loc']))} ({error['type']})"
+                for error in e.errors(include_input=False)
             )
+            raise InvalidEnricherParams(
+                f"Enricher '{self.name()}' received invalid parameters: {fields}"
+            ) from None
 
     def resolve_params(self) -> Dict[str, Any]:
         resolved = {}
@@ -213,9 +294,26 @@ class Enricher(ABC):
         pass
 
     @classmethod
-    @abstractmethod
-    def key(cls) -> str:
+    def key(cls) -> Optional[str]:
         """Primary key on which the enricher operates (e.g. domain, IP, etc.)"""
+        return cls.primary_field()
+
+    @classmethod
+    def primary_field(cls) -> Optional[str]:
+        """InputType field flagged primary, else its first required field, else its first field."""
+        base_type = cls.InputType
+        if not (isinstance(base_type, type) and issubclass(base_type, BaseModel)):
+            return None
+        fields = base_type.model_fields
+        for name, field in fields.items():
+            if isinstance(
+                field.json_schema_extra, dict
+            ) and field.json_schema_extra.get("primary"):
+                return name
+        for name, field in fields.items():
+            if field.is_required():
+                return name
+        return next(iter(fields), None)
 
     @classmethod
     def documentation(cls) -> str:
@@ -373,21 +471,7 @@ class Enricher(ABC):
 
         base_type = self.InputType
         adapter = TypeAdapter(base_type)
-
-        primary_field = None
-        if issubclass(base_type, BaseModel):
-            for name, field in base_type.model_fields.items():
-                if field.json_schema_extra and field.json_schema_extra.get("primary"):
-                    primary_field = name
-                    break
-            if primary_field is None:
-                # fallback : premier champ requis ou premier champ disponible
-                for name, field in base_type.model_fields.items():
-                    if field.is_required():
-                        primary_field = name
-                        break
-                if primary_field is None:
-                    primary_field = next(iter(base_type.model_fields.keys()))
+        primary_field = self.primary_field()
 
         cleaned = []
 
@@ -420,7 +504,24 @@ class Enricher(ABC):
     ) -> List[Dict[str, Any]]:
         return results
 
+    def report_issue(self, outcome: str, message: str) -> None:
+        if outcome not in {
+            "partial",
+            "missing_credentials",
+            "quota_exceeded",
+            "failed",
+        }:
+            raise ValueError(f"Unknown enrichment issue: {outcome}")
+        issue = {"outcome": outcome, "message": message}
+        if issue not in self._issues:
+            self._issues.append(issue)
+
     async def execute(self, values: List[Any]) -> List[Dict[str, Any]]:
+        started = monotonic()
+        self._issues = []
+        processed = []
+        captured_errors: List[str] = []
+        error_token = enrichment_errors.set(captured_errors)
         if self.name() != "enricher_orchestrator":
             Logger.info(self.sketch_id, {"message": f"Enricher {self.name()} started."})
         try:
@@ -432,64 +533,172 @@ class Enricher(ABC):
             # Flush any pending batch operations
             self._graph_service.flush()
 
-            if self.name() != "enricher_orchestrator":
-                Logger.completed(
-                    self.sketch_id, {"message": f"Enricher {self.name()} finished."}
-                )
-
             return processed
 
         except Exception as e:
+            processed = []
+            self._graph_service.repository.clear_batch()
             if self.name() != "enricher_orchestrator":
                 Logger.error(
                     self.sketch_id,
                     {"message": f"Enricher {self.name()} errored: {str(e)}"},
                 )
+            outcome = (
+                "missing_credentials"
+                if isinstance(e, InvalidEnricherParams)
+                and any(
+                    p.get("type") == "vaultSecret" and not self.params.get(p["name"])
+                    for p in self.params_schema
+                )
+                else "failed"
+            )
+            self.report_issue(outcome, str(e))
             return []
+        finally:
+            enrichment_errors.reset(error_token)
+            for message in captured_errors:
+                if any(issue["message"] == message for issue in self._issues):
+                    continue
+                lower = message.lower()
+                issue_outcome = "failed"
+                if any(
+                    term in lower
+                    for term in ("429", "quota", "rate limit", "rate-limit")
+                ):
+                    issue_outcome = "quota_exceeded"
+                elif any(
+                    term in lower
+                    for term in (
+                        "missing api key",
+                        "api key is required",
+                        "api key not found",
+                        "api key not configured",
+                        "no api key",
+                        "missing credentials",
+                    )
+                ):
+                    issue_outcome = "missing_credentials"
+                self.report_issue(issue_outcome, message)
+            outcome = "results" if processed else "no_matches"
+            repository = self._graph_service.repository
+            committed = (
+                repository.committed_operations
+                if isinstance(repository, Neo4jGraphRepository)
+                else 0
+            )
+            if self._issues:
+                outcome = (
+                    "partial" if processed or committed else self._issues[0]["outcome"]
+                )
+            self.execution_summary = {
+                "outcome": outcome,
+                "provider": self.name(),
+                "enricher": self.name(),
+                "scan_id": self.scan_id,
+                "input_count": len(values),
+                "output_count": len(processed),
+                "committed_graph_operations": committed,
+                "new_entity_count": repository.new_entity_count
+                if isinstance(repository, Neo4jGraphRepository)
+                else 0,
+                "provider_request_count": getattr(self, "provider_request_count", 0),
+                "provider_evidence": getattr(self, "provider_evidence", []),
+                "duration_ms": round((monotonic() - started) * 1000),
+                "errors": self._issues.copy(),
+            }
+            if self.name() != "enricher_orchestrator":
+                completion_message = {
+                    "message": f"Enricher {self.name()} finished: {outcome}.",
+                    "summary": self.execution_summary,
+                }
+                if outcome in {"results", "no_matches"}:
+                    Logger.completed(
+                        self.sketch_id,
+                        completion_message,
+                        publish_status=not self.defer_status_until_commit,
+                    )
+                elif outcome == "partial":
+                    Logger.warn(self.sketch_id, completion_message)
+                else:
+                    Logger.error(self.sketch_id, completion_message)
+                if (
+                    outcome not in {"results", "no_matches"}
+                    and not self.defer_status_until_commit
+                ):
+                    Logger.status(
+                        self.sketch_id,
+                        EventLevel.WARNING
+                        if outcome == "partial"
+                        else EventLevel.FAILED,
+                        completion_message,
+                    )
 
     def create_node(self, node_obj: FlowsintType) -> None:
         """
-        Create a single Neo4j node.
+        Create or update a Neo4j node for a FlowsintType in the current sketch.
 
-        The following properties are automatically added to every node:
-        - type: Lowercase version of node_type
-        - sketch_id: Current sketch ID from enricher context
-        - label: Automatically computed by FlowsintType, or defaults to key_value if not provided
-        - created_at: ISO 8601 UTC timestamp (only on creation, not updates)
+        The node's type and label come from the object (its computed nodeLabel).
 
-        Use Pydantic object directly:
             ```python
             self.create_node(ip)
             ```
 
         Args:
-            node_obj: Either a Pydantic object or node label string
-            **properties: Additional node properties or overrides
+            node_obj: FlowsintType instance to store
         """
-        self._graph_service.create_node_from_flowsint_type(node_obj=node_obj)
+        self._graph_service.create_node_from_flowsint_type(
+            node_obj=node_obj,
+            metadata={"scan_id": self.scan_id, "enricher": self.name()},
+        )
 
     def create_relationship(
         self,
         from_obj: BaseModel,
         to_obj: BaseModel,
         rel_label: str = "IS_RELATED_TO",
+        *,
+        observed_at: Optional[str] = None,
+        source_ref: Optional[str] = None,
+        provider: Optional[str] = None,
+        provider_evidence: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Create a relationship between two nodes.
+        Create a relationship between two nodes, matched by type and label.
 
-        Best Practice - Use Pydantic objects directly:
             ```python
             self.create_relationship(individual, domain, "HAS_DOMAIN")
             self.create_relationship(email, breach, "FOUND_IN_BREACH")
             ```
 
         Args:
-            from_obj: Either a Pydantic object (source) or source node label
-            to_obj: Either a Pydantic object (target) or source node key property
-            rel_label: Either relationship type (Pydantic) or source node key value
+            from_obj: FlowsintType instance (source)
+            to_obj: FlowsintType instance (target)
+            rel_label: Relationship type (e.g. "HAS_DOMAIN")
         """
+        observation: Dict[str, Any] = {
+            "provider": provider or self.name(),
+            "enricher": self.name(),
+            "scan_id": self.scan_id,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": observed_at,
+            "source_ref": source_ref,
+            "facts": _observation_facts(to_obj),
+        }
+        requests = getattr(self, "provider_evidence", [])
+        # Postprocess may combine several lookups; only explicit association or
+        # a single response can identify the observation's original retrieval.
+        evidence = provider_evidence or (requests[0] if len(requests) == 1 else {})
+        for field in ("fetched_at", "source_scan_id", "request_id"):
+            value = evidence.get(field)
+            if isinstance(value, str) and 0 < len(value) <= 128:
+                observation["retrieved_at" if field == "fetched_at" else field] = value
+        if type(evidence.get("cache_hit")) is bool:
+            observation["cache_hit"] = evidence["cache_hit"]
         self._graph_service.create_relationship(
-            from_obj=from_obj, to_obj=to_obj, rel_label=rel_label
+            from_obj=from_obj,
+            to_obj=to_obj,
+            rel_label=rel_label,
+            observation=observation,
         )
 
     def log_graph_message(self, message: str) -> None:

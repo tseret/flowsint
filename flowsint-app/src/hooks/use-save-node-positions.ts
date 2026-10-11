@@ -3,125 +3,108 @@ import { useDebounce } from './use-debounce'
 import { sketchService } from '@/api/sketch-service'
 import { useGraphSaveStatus } from '@/stores/graph-save-status-store'
 import { useGraphStore } from '@/stores/graph-store'
+import type { GraphNode } from '@/types'
 
 interface NodePosition {
   x: number
   y: number
 }
-
 export type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
+type Batch = { sketchId?: string; positions: Map<string, NodePosition> }
 
-/**
- * Hook to save node positions to the backend
- * Handles debouncing and batch updates for all nodes
- */
 export function useSaveNodePositions(sketchId?: string) {
-  const [changedNodePositions, setChangedNodePositions] = useState<Map<string, NodePosition>>(
-    new Map()
-  )
+  const [batch, setBatch] = useState<Batch>({ sketchId, positions: new Map() })
+  const latest = useRef(batch)
+  const writes = useRef(Promise.resolve())
+  const isStabilizingRef = useRef(false)
   const setNodes = useGraphStore((s) => s.setNodes)
-  const isStabilizingRef = useRef(false) // Start as false, mark as true only during layout regeneration
   const setSaveStatus = useGraphSaveStatus((state) => state.setSaveStatus)
+  const debouncedBatch = useDebounce(batch, 1200)
 
-  // Debounced value to trigger save (2 seconds)
-  const debouncedChangedPositions = useDebounce(changedNodePositions, 1200)
-
-  // Initialize status on mount
-  useEffect(() => {
+  const clearPendingChanges = useCallback(() => {
+    const empty = { sketchId, positions: new Map<string, NodePosition>() }
+    latest.current = empty
+    setBatch(empty)
     setSaveStatus('idle')
-  }, [setSaveStatus])
+  }, [sketchId, setSaveStatus])
 
-  /**
-   * Mark the graph as stabilized (can start saving positions)
-   */
+  useEffect(() => {
+    latest.current = { sketchId, positions: new Map() }
+    setSaveStatus('idle')
+    return () => {
+      latest.current = { positions: new Map() }
+    }
+  }, [sketchId, setSaveStatus])
+
   const markAsStabilized = useCallback(() => {
     isStabilizingRef.current = false
   }, [])
-
-  /**
-   * Mark the graph as stabilizing (prevent saving positions)
-   */
   const markAsStabilizing = useCallback(() => {
     isStabilizingRef.current = true
   }, [])
-
-  /**
-   * Save positions for all nodes
-   * @param nodes - Array of nodes or graphData.nodes
-   * @param force - Force save even if stabilizing (for layout regeneration)
-   */
   const saveAllNodePositions = useCallback(
-    (nodes: any[], force = false) => {
-      if (!sketchId) {
-        return
-      }
-
-      if (!force && isStabilizingRef.current) {
-        return
-      }
-
-      const newMap = new Map<string, NodePosition>()
-
-      nodes.forEach((node: any) => {
-        if (node.x !== undefined && node.y !== undefined) {
-          // Fix node position to prevent force simulation from moving it
+    (nodes: GraphNode[], force = false) => {
+      if (!sketchId || (!force && isStabilizingRef.current)) return
+      const positions = new Map(
+        latest.current.sketchId === sketchId ? latest.current.positions : []
+      )
+      for (const node of nodes) {
+        if (Number.isFinite(node.x) && Number.isFinite(node.y)) {
           node.fx = node.x
           node.fy = node.y
-          newMap.set(node.id, { x: node.x, y: node.y })
+          positions.set(node.id, { x: node.x, y: node.y })
         }
-      })
-
-      if (newMap.size > 0) {
-        setChangedNodePositions(newMap)
-        setNodes(nodes)
-        setSaveStatus('pending')
       }
+      if (!positions.size) return
+      const next = { sketchId, positions }
+      latest.current = next
+      setBatch(next)
+      setNodes(
+        useGraphStore.getState().nodes.map((node) => {
+          const position = positions.get(node.id)
+          return position ? { ...node, ...position, fx: position.x, fy: position.y } : node
+        })
+      )
+      setSaveStatus('pending')
     },
     [sketchId, setNodes, setSaveStatus]
   )
 
-  /**
-   * Clear pending changes (useful when switching sketches)
-   */
-  const clearPendingChanges = useCallback(() => {
-    setChangedNodePositions(new Map())
-  }, [])
-
-  // Save positions when debounced value changes
   useEffect(() => {
-    if (!sketchId || debouncedChangedPositions.size === 0) {
-      return
-    }
-
-    const positions = Array.from(debouncedChangedPositions.entries()).map(([nodeId, pos]) => ({
-      nodeId,
-      x: pos.x,
-      y: pos.y
-    }))
-
-    setSaveStatus('saving')
-
-    sketchService
-      .updateNodePositions(sketchId, positions)
-      .then(() => {
-        setChangedNodePositions(new Map())
-        setSaveStatus('saved')
-        // Reset to idle after 2 seconds
-        setTimeout(() => setSaveStatus('idle'), 2000)
-      })
-      .catch((error) => {
+    if (!sketchId || debouncedBatch.sketchId !== sketchId || !debouncedBatch.positions.size) return
+    let cancelled = false
+    // Serialize writes so an older response cannot overwrite a newer drag on the server.
+    writes.current = writes.current.then(async () => {
+      if (cancelled) return
+      const positions = Array.from(debouncedBatch.positions, ([nodeId, pos]) => ({
+        nodeId,
+        ...pos
+      }))
+      if (latest.current === debouncedBatch) setSaveStatus('saving')
+      try {
+        await sketchService.updateNodePositions(sketchId, positions)
+        // A completed write only acknowledges its own batch, never a newer drag.
+        if (latest.current === debouncedBatch) {
+          const empty = { sketchId, positions: new Map<string, NodePosition>() }
+          latest.current = empty
+          setBatch(empty)
+          setSaveStatus('saved')
+        }
+      } catch (error) {
         console.error('[useSaveNodePositions] Failed to save:', error)
-        setSaveStatus('error')
-        // Reset to idle after 3 seconds
-        setTimeout(() => setSaveStatus('idle'), 3000)
-      })
-  }, [debouncedChangedPositions, sketchId, setSaveStatus])
+        if (latest.current === debouncedBatch) setSaveStatus('error')
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [debouncedBatch, sketchId, setSaveStatus])
 
   return {
     saveAllNodePositions,
     markAsStabilized,
     markAsStabilizing,
     clearPendingChanges,
-    hasPendingChanges: changedNodePositions.size > 0
+    hasPendingChanges: batch.sketchId === sketchId && batch.positions.size > 0
   }
 }

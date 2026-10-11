@@ -158,7 +158,7 @@ export default function AddItemDialog() {
       )
       const newNode: GraphNode = newNodeResponse.node
       if (newNode && replaceNode) {
-        replaceNode(tempId, newNode.id, newNode.nodeProperties)
+        replaceNode(tempId, newNode)
         if (relatedNodeToAdd && tempEdgeId) {
           const relationPayload = {
             source: relatedNodeToAdd.id,

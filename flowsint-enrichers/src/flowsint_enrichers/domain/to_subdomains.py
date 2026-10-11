@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 
 import requests
 from tools.network.subfinder import SubfinderTool
@@ -25,10 +25,6 @@ class SubdomainEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Domain"
-
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find subdomains using subfinder (Docker) or fallback to crt.sh."""
@@ -92,7 +88,7 @@ class SubdomainEnricher(Enricher):
         return subdomains
 
     def postprocess(
-        self, results: List[OutputType], original_input: List[InputType]
+        self, results: List[Any], original_input: List[InputType]
     ) -> List[OutputType]:
         output: List[OutputType] = []
         for domain_obj in results:

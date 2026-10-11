@@ -17,6 +17,7 @@ export interface GraphViewerProps {
   instanceId?: string
   allowLasso?: boolean
   sketchId?: string
+  presentationOnly?: boolean
   allowForces?: boolean
   autoZoomOnNode?: boolean
   showMinimalControls?: boolean

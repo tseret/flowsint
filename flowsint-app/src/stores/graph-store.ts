@@ -1,10 +1,21 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { GraphNode, GraphEdge, NodeProperties, ChatContextFormat, Path } from '@/types'
+import type { GraphNode, GraphEdge, ChatContextFormat, Path } from '@/types'
 import { type ActionItem } from '@/lib/action-items'
 import { Filters, TypeFilter } from '@/types/filter'
+import { edgeMatchesEvidence } from '@/lib/graph-presentation'
+import { computeDiscoveryWaves } from '@/components/sketches/graph/utils/discovery-waves'
 
 interface GraphState {
+  pendingRefresh: boolean
+  changes: {
+    addedNodes: string[]
+    updatedNodes: string[]
+    addedEdges: string[]
+    updatedEdges: string[]
+  } | null
+  setPendingRefresh: (pending: boolean) => void
+  setChanges: (changes: GraphState['changes']) => void
   // === Graph ===
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -21,7 +32,7 @@ interface GraphState {
   updateGraphData: (nodes: GraphNode[], edges: GraphEdge[]) => void
   updateNode: (nodeId: string, updates: Partial<GraphNode>) => void
   updateEdge: (edgeId: string, updates: Partial<GraphEdge>) => void
-  replaceNode: (oldId: string, newId: string, newProperties: NodeProperties) => void
+  replaceNode: (oldId: string, savedNode: GraphNode) => void
   reset: () => void
 
   // === Selection & Current ===
@@ -70,6 +81,7 @@ interface GraphState {
   filters: Filters
   setFilters: (filters: Filters) => void
   toggleTypeFilter: (filter: TypeFilter) => void
+  toggleWaveFilter: (wave: number) => void
 
   // === Path ===
   highlightedNodeIds: string[]
@@ -86,18 +98,36 @@ interface GraphState {
 }
 
 // --- Helpers ---
-const computeFilteredNodes = (nodes: GraphNode[], filters: Filters): GraphNode[] => {
-  // types
-  const areAllToggled = filters.types.every((t) => t.checked)
-  const areNoneToggled = filters.types.every((t) => !t.checked)
-  if (areNoneToggled || areAllToggled) return nodes
-  const types = filters.types.filter((t) => !t.checked).map((t) => t.type)
-  return nodes.filter((node) => !types.includes(node.nodeType))
+const computeFilteredNodes = (
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  filters: Filters
+): GraphNode[] => {
+  // pivot depth: computed on the whole graph so hiding a depth never renumbers the others
+  const waveOf = filters.hiddenWaves.length ? computeDiscoveryWaves(nodes, edges).waveOf : null
+  nodes = nodes.filter((node) => !filters.collapsedTypes?.includes(node.nodeType))
+  // types: all or none checked means no type filter
+  const hiddenTypes =
+    filters.types.every((t) => t.checked) || filters.types.every((t) => !t.checked)
+      ? []
+      : filters.types.filter((t) => !t.checked).map((t) => t.type)
+  if (!hiddenTypes.length && !waveOf) return nodes
+  return nodes.filter(
+    (node) =>
+      !hiddenTypes.includes(node.nodeType) &&
+      !(waveOf && filters.hiddenWaves.includes(waveOf.get(node.id)!))
+  )
 }
 
-const computeFilteredEdges = (edges: GraphEdge[], filteredNodes: GraphNode[]): GraphEdge[] => {
+const computeFilteredEdges = (
+  edges: GraphEdge[],
+  filteredNodes: GraphNode[],
+  filters: Filters
+): GraphEdge[] => {
   const nodeIds = new Set(filteredNodes.map((n) => n.id))
-  return edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+  return edges.filter(
+    (e) => nodeIds.has(e.source) && nodeIds.has(e.target) && edgeMatchesEvidence(e, filters)
+  )
 }
 
 const computeSelectedNodesWithEdgesAsList = (
@@ -106,9 +136,10 @@ const computeSelectedNodesWithEdgesAsList = (
 ): ChatContextFormat[] => {
   const context: ChatContextFormat[] = []
   const remaining = new Map(selectedNodes.map((node) => [node.id, node]))
+  const selected = new Map(remaining)
   edgesMapping.forEach((edge) => {
-    const fromNode = remaining.get(edge.source)
-    const toNode = remaining.get(edge.target)
+    const fromNode = selected.get(edge.source)
+    const toNode = selected.get(edge.target)
     if (fromNode && toNode) {
       context.push({
         type: 'relation',
@@ -139,6 +170,10 @@ const computeSelectedNodesWithEdgesAsList = (
 export const useGraphStore = create<GraphState>()(
   persist(
     (set, get) => ({
+      pendingRefresh: false,
+      changes: null,
+      setPendingRefresh: (pendingRefresh) => set({ pendingRefresh }),
+      setChanges: (changes) => set({ changes, pendingRefresh: false }),
       // === Graph ===
       nodes: [],
       edges: [],
@@ -151,16 +186,16 @@ export const useGraphStore = create<GraphState>()(
 
       setNodes: (nodes) => {
         const { filters, edges } = get()
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
         // update HashMap
         const nodesMapping = new Map(nodes.map((node) => [node.id, node]))
         set({ nodes, filteredNodes, filteredEdges, nodesMapping })
       },
       setEdges: (edges) => {
         const { filters, nodes } = get()
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
         const edgesMapping = new Map(edges.map((edge) => [edge.id, edge]))
         const selectedNodesWithEdgesAsList = computeSelectedNodesWithEdgesAsList(
           get().selectedNodes,
@@ -170,16 +205,16 @@ export const useGraphStore = create<GraphState>()(
       },
 
       addNode: (newNode) => {
-        const { nodes, nodesMapping, edges, filters } = get()
+        const { nodesMapping, edges, filters } = get()
         const nodeWithId: GraphNode = {
           id: newNode.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           position: { x: 0, y: 0 },
           ...newNode
         } as GraphNode
-        nodes.push(nodeWithId)
+        const nodes = [...get().nodes, nodeWithId]
         nodesMapping.set(nodeWithId.id, nodeWithId)
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
         set({
           nodes,
           currentNodeId: nodeWithId.id,
@@ -190,15 +225,15 @@ export const useGraphStore = create<GraphState>()(
       },
 
       addEdge: (newEdge) => {
-        const { edges, edgesMapping, nodes, filters } = get()
+        const { edgesMapping, nodes, filters } = get()
         const edgeWithId: GraphEdge = {
           id: newEdge.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           ...newEdge
         } as GraphEdge
-        edges.push(edgeWithId)
+        const edges = [...get().edges, edgeWithId]
         edgesMapping.set(edgeWithId.id, edgeWithId)
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
         const selectedNodesWithEdgesAsList = computeSelectedNodesWithEdgesAsList(
           get().selectedNodes,
           edgesMapping
@@ -214,8 +249,8 @@ export const useGraphStore = create<GraphState>()(
         const newNodes = nodes.filter((n) => !nodeIdsSet.has(n.id))
         const newEdges = edges.filter((e) => !nodeIdsSet.has(e.source) && !nodeIdsSet.has(e.target))
 
-        const filteredNodes = computeFilteredNodes(newNodes, filters)
-        const filteredEdges = computeFilteredEdges(newEdges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(newNodes, newEdges, filters)
+        const filteredEdges = computeFilteredEdges(newEdges, filteredNodes, filters)
         // update HashMap
         deleteKeys(nodesMapping, nodeIdsSet)
         set({ nodes: newNodes, edges: newEdges, filteredNodes, filteredEdges })
@@ -225,8 +260,8 @@ export const useGraphStore = create<GraphState>()(
         const { edges, edgesMapping, nodes, filters } = get()
         const edgeIdsSet = new Set(edgeIds)
         const newEdges = edges.filter((e) => !edgeIdsSet.has(e.id))
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(newEdges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, newEdges, filters)
+        const filteredEdges = computeFilteredEdges(newEdges, filteredNodes, filters)
         deleteKeys(edgesMapping, edgeIdsSet)
         const selectedNodesWithEdgesAsList = computeSelectedNodesWithEdgesAsList(
           get().selectedNodes,
@@ -243,8 +278,8 @@ export const useGraphStore = create<GraphState>()(
 
       updateGraphData: (nodes, edges) => {
         const { filters } = get()
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
         const nodesMapping = new Map(nodes.map((node) => [node.id, node]))
         const edgesMapping = new Map(edges.map((edge) => [edge.id, edge]))
         const selectedNodesWithEdgesAsList = computeSelectedNodesWithEdgesAsList(
@@ -269,8 +304,8 @@ export const useGraphStore = create<GraphState>()(
           node.id === nodeId ? { ...node, ...updates } : node
         )
 
-        const filteredNodes = computeFilteredNodes(updatedNodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(updatedNodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
 
         const newNodesMapping = new Map(nodesMapping)
         const node = newNodesMapping.get(nodeId)
@@ -295,8 +330,8 @@ export const useGraphStore = create<GraphState>()(
         const updatedEdges = edges.map((edge) =>
           edge.id === edgeId ? ({ ...edge, ...updates } as GraphEdge) : edge
         )
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(updatedEdges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, updatedEdges, filters)
+        const filteredEdges = computeFilteredEdges(updatedEdges, filteredNodes, filters)
         const edge = edgesMapping.get(edgeId)
         if (edge) edgesMapping.set(edgeId, { ...edge, ...updates } as GraphEdge)
         const selectedNodesWithEdgesAsList = computeSelectedNodesWithEdgesAsList(
@@ -312,11 +347,12 @@ export const useGraphStore = create<GraphState>()(
         })
       },
 
-      replaceNode: (oldId, newId, nodeProperties) => {
+      replaceNode: (oldId, savedNode) => {
+        const { id: newId, nodeProperties, version } = savedNode
         const { nodes, edges, filters, nodesMapping, setCurrentNodeId } = get()
         // Update the node's ID and data.id
         const updatedNodes = nodes.map((node) =>
-          node.id === oldId ? { ...node, id: newId, nodeProperties: nodeProperties } : node
+          node.id === oldId ? { ...node, id: newId, nodeProperties, version } : node
         )
         // Update all edges that reference this node
         const updatedEdges = edges.map((edge) => {
@@ -328,8 +364,8 @@ export const useGraphStore = create<GraphState>()(
           }
           return edge
         })
-        const filteredNodes = computeFilteredNodes(updatedNodes, filters)
-        const filteredEdges = computeFilteredEdges(updatedEdges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(updatedNodes, updatedEdges, filters)
+        const filteredEdges = computeFilteredEdges(updatedEdges, filteredNodes, filters)
         // Update nodesMapping
         nodesMapping.delete(oldId)
         const newNode = updatedNodes.find((n) => n.id === newId)
@@ -496,17 +532,18 @@ export const useGraphStore = create<GraphState>()(
       // === Filters ===
       filters: {
         types: [],
-        rules: []
+        rules: [],
+        hiddenWaves: []
       },
       setFilters: (filters) => {
         const { nodes, edges } = get()
-        const filteredNodes = computeFilteredNodes(nodes, filters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
+        const filteredNodes = computeFilteredNodes(nodes, edges, filters)
+        const filteredEdges = computeFilteredEdges(edges, filteredNodes, filters)
         set({ filters, filteredNodes, filteredEdges })
       },
 
       toggleTypeFilter: (filter) => {
-        const { filters, nodes, edges } = get()
+        const { filters } = get()
         const newTypes = filters.types.map((f: TypeFilter) => {
           if (f.type === filter.type)
             return {
@@ -515,10 +552,15 @@ export const useGraphStore = create<GraphState>()(
             }
           return f
         })
-        const newFilters = { ...filters, types: newTypes }
-        const filteredNodes = computeFilteredNodes(nodes, newFilters)
-        const filteredEdges = computeFilteredEdges(edges, filteredNodes)
-        set({ filters: newFilters, filteredNodes, filteredEdges })
+        get().setFilters({ ...filters, types: newTypes })
+      },
+
+      toggleWaveFilter: (wave) => {
+        const { filters } = get()
+        const hiddenWaves = filters.hiddenWaves.includes(wave)
+          ? filters.hiddenWaves.filter((w) => w !== wave)
+          : [...filters.hiddenWaves, wave]
+        get().setFilters({ ...filters, hiddenWaves })
       },
 
       // === Path ===
@@ -539,6 +581,8 @@ export const useGraphStore = create<GraphState>()(
           openAddRelationDialog: false,
           openNodeEditorModal: false,
           currentNodeType: null,
+          // A new sketch starts unfiltered by depth; type filters are rebuilt when its graph loads
+          filters: { ...get().filters, hiddenWaves: [] },
           filteredNodes: get().nodes,
           filteredEdges: get().edges,
           selectedNodesWithEdgesAsList: [],

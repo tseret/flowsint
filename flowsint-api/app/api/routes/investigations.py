@@ -1,10 +1,16 @@
-from typing import List
+from typing import List, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.schemas.collaboration import (
+    CaseActivityRead,
+    CaseItemCreate,
+    CaseItemRead,
+    CaseItemUpdate,
+)
 from app.api.schemas.investigation import (
     CollaboratorAdd,
     CollaboratorRead,
@@ -14,7 +20,13 @@ from app.api.schemas.investigation import (
     InvestigationUpdate,
 )
 from app.api.schemas.sketch import SketchRead
-from flowsint_core.core.models import Profile
+from flowsint_core.core.models import (
+    CaseActivity,
+    CaseItem,
+    Investigation,
+    Profile,
+    Sketch,
+)
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
     ConflictError,
@@ -23,12 +35,16 @@ from flowsint_core.core.services import (
     PermissionDeniedError,
     create_investigation_service,
 )
+from flowsint_core.core.services.collaboration_service import CollaborationService
+from flowsint_core.core.services.investigation_service import InvestigationService
 from flowsint_core.core.types import Role
 
 router = APIRouter()
 
 
-def _inject_current_user_role(service, investigation, user_id) -> InvestigationRead:
+def _inject_current_user_role(
+    service: InvestigationService, investigation: Investigation, user_id: UUID
+) -> InvestigationRead:
     """Build InvestigationRead with the current user's role attached."""
     result = InvestigationRead.model_validate(investigation)
     role_entry = service.get_user_role_for_investigation(user_id, investigation.id)
@@ -41,7 +57,7 @@ def _inject_current_user_role(service, investigation, user_id) -> InvestigationR
 def get_investigations(
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> List[InvestigationRead]:
     """Get all investigations accessible to the user based on their roles."""
     service = create_investigation_service(db)
     allowed_roles = [Role.OWNER, Role.ADMIN, Role.EDITOR, Role.VIEWER]
@@ -61,7 +77,7 @@ def create_investigation(
     payload: InvestigationCreate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> InvestigationRead:
     service = create_investigation_service(db)
     investigation = service.create(
         name=payload.name,
@@ -76,7 +92,7 @@ def get_investigation_by_id(
     investigation_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> InvestigationRead:
     service = create_investigation_service(db)
     try:
         investigation = service.get_by_id(investigation_id, current_user.id)
@@ -92,10 +108,12 @@ def get_sketches_by_investigation(
     investigation_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> List[Sketch]:
     service = create_investigation_service(db)
     try:
-        return service.get_sketches(investigation_id, current_user.id)
+        return cast(
+            List[Sketch], service.get_sketches(investigation_id, current_user.id)
+        )
     except NotFoundError:
         raise HTTPException(
             status_code=404, detail="No sketches found for this investigation"
@@ -110,7 +128,7 @@ def update_investigation(
     payload: InvestigationUpdate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> InvestigationRead:
     service = create_investigation_service(db)
     try:
         investigation = service.update(
@@ -132,7 +150,7 @@ def delete_investigation(
     investigation_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> None:
     service = create_investigation_service(db)
     try:
         service.delete(investigation_id, current_user.id)
@@ -153,7 +171,7 @@ def get_collaborators(
     investigation_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> List[CollaboratorRead]:
     service = create_investigation_service(db)
     try:
         entries = service.get_collaborators(investigation_id, current_user.id)
@@ -180,7 +198,7 @@ def add_collaborator(
     payload: CollaboratorAdd,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> CollaboratorRead:
     service = create_investigation_service(db)
     try:
         role = Role(payload.role.lower())
@@ -217,7 +235,7 @@ def update_collaborator_role(
     payload: CollaboratorUpdate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> CollaboratorRead:
     service = create_investigation_service(db)
     try:
         role = Role(payload.role.lower())
@@ -251,7 +269,7 @@ def remove_collaborator(
     user_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> None:
     service = create_investigation_service(db)
     try:
         service.remove_collaborator(
@@ -264,3 +282,89 @@ def remove_collaborator(
         raise HTTPException(status_code=404, detail="Collaborator not found")
     except PermissionDeniedError:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+# Case collaboration uses the same investigation roles as sketches and analyses.
+@router.get("/{investigation_id}/items", response_model=list[CaseItemRead])
+def get_case_items(
+    investigation_id: UUID,
+    offset: int = Query(default=0, ge=0),
+    sketch_id: UUID | None = None,
+    target_kind: str | None = None,
+    target_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> list[CaseItem]:
+    try:
+        return cast(
+            list[CaseItem],
+            CollaborationService(db).items(
+                investigation_id,
+                current_user.id,
+                offset,
+                sketch_id,
+                target_kind,
+                target_id,
+            ),
+        )
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+
+
+@router.get("/{investigation_id}/activity", response_model=list[CaseActivityRead])
+def get_case_activity(
+    investigation_id: UUID,
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> list[CaseActivity]:
+    try:
+        return cast(
+            list[CaseActivity],
+            CollaborationService(db).activity(
+                investigation_id, current_user.id, offset
+            ),
+        )
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+
+
+@router.post("/{investigation_id}/items", response_model=CaseItemRead, status_code=201)
+def create_case_item(
+    investigation_id: UUID,
+    payload: CaseItemCreate,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> CaseItem:
+    try:
+        return CollaborationService(db).create(
+            investigation_id, current_user.id, payload.model_dump()
+        )
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=exc.message)
+
+
+@router.put("/{investigation_id}/items/{item_id}", response_model=CaseItemRead)
+def update_case_item(
+    investigation_id: UUID,
+    item_id: UUID,
+    payload: CaseItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> CaseItem:
+    try:
+        return CollaborationService(db).update(
+            investigation_id,
+            item_id,
+            current_user.id,
+            payload.version,
+            payload.model_dump(exclude_unset=True, exclude={"version"}),
+        )
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=exc.message)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.message)

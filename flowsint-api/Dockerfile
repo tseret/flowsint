@@ -72,6 +72,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5001", "--reload
 # PROD
 FROM python:3.12-slim AS production
 
+ARG BUILD_REVISION=development
+ENV FLOWSINT_BUILD_REVISION=${BUILD_REVISION}
+LABEL org.opencontainers.image.revision=${BUILD_REVISION}
+
 LABEL org.opencontainers.image.source="https://github.com/reconurge/flowsint"
 LABEL org.opencontainers.image.description="Flowsint API & Worker"
 LABEL org.opencontainers.image.licenses="Apache-2.0"

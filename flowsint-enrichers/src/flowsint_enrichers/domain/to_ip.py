@@ -1,5 +1,5 @@
 import socket
-from typing import List
+from typing import Any, List
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
@@ -15,7 +15,7 @@ class ResolveEnricher(Enricher):
     InputType = Domain
     OutputType = Ip
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.domain_ip_mapping: List[tuple[Domain, Ip]] = []
 
@@ -26,10 +26,6 @@ class ResolveEnricher(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Domain"
-
-    @classmethod
-    def key(cls) -> str:
-        return "domain"
 
     @classmethod
     def documentation(cls) -> str:

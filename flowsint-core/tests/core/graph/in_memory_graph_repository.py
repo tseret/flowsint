@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from flowsint_core.core.graph.repository import CREATE_ONLY_PROPS
+
 
 class InMemoryGraphRepository:
     """
@@ -43,17 +45,21 @@ class InMemoryGraphRepository:
                 data.get("nodeLabel") == node_label
                 and data.get("sketch_id") == sketch_id
             ):
-                # Update existing node
-                self._nodes[element_id].update(node_obj)
+                # Update existing node; creation-only props keep their first value
+                self._nodes[element_id].update(
+                    {k: v for k, v in node_obj.items() if k not in CREATE_ONLY_PROPS}
+                )
                 self._nodes[element_id]["deleted_at"] = None
                 return element_id
 
         # Create new node
         element_id = self._generate_element_id("node")
+        created_at = datetime.now(timezone.utc).isoformat()
         self._nodes[element_id] = {
             **node_obj,
+            "nodeMetadata.created_at": created_at,
             "sketch_id": sketch_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
             "deleted_at": None,
             "_labels": [node_type] if node_type else ["Node"],
         }
@@ -277,6 +283,43 @@ class InMemoryGraphRepository:
                     )
 
         return {"nodes": nodes, "edges": edges}
+
+    def get_graph_slice(
+        self,
+        sketch_id: str,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        limit: int = 150,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        graph = self.get_sketch_graph(sketch_id)
+        centers = set(center_ids or [])
+        neighbors = set(centers)
+        for edge in graph["edges"]:
+            if edge["source"] in centers or edge["target"] in centers:
+                neighbors.update((edge["source"], edge["target"]))
+        query = (search or "").lower()
+        nodes = [
+            n
+            for n in graph["nodes"]
+            if (not centers or n["id"] in neighbors)
+            and (
+                not query
+                or query in str(n["data"].get("nodeLabel", "")).lower()
+                or query in str(n["data"].get("nodeType", "")).lower()
+            )
+        ]
+        nodes.sort(key=lambda n: (n["id"] not in centers, n["id"]))
+        nodes = nodes[offset : offset + limit]
+        ids = {n["id"] for n in nodes}
+        edges = [e for e in graph["edges"] if e["source"] in ids and e["target"] in ids]
+        return {
+            "nodes": nodes,
+            "edges": edges[:10000],
+            "total_nodes": len(graph["nodes"]),
+            "total_edges": len(graph["edges"]),
+            "truncated": len(nodes) < len(graph["nodes"]) or len(edges) > 10000,
+        }
 
     def get_neighbors(self, node_id: str, sketch_id: str) -> Dict[str, Any]:
         """Get a node and all its direct relationships."""

@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -21,6 +22,7 @@ from flowsint_core.core.graph import GraphNode, create_graph_service
 from flowsint_core.core.models import Profile
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
+    ConflictError,
     DatabaseError,
     NotFoundError,
     PermissionDeniedError,
@@ -47,6 +49,31 @@ class NodeData(BaseModel):
         extra = "allow"
 
 
+class TelemetryImport(BaseModel):
+    content: str = Field(max_length=2 * 1024 * 1024, min_length=1)
+    format: Literal["normalized", "dns", "proxy", "zeek", "suricata", "cloudtrail"]
+    execute: bool = False
+
+
+@router.post("/{sketch_id}/import/telemetry")
+def import_telemetry(
+    sketch_id: UUID,
+    body: TelemetryImport,
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> Any:
+    try:
+        return create_sketch_service(db).import_telemetry(
+            sketch_id, current_user.id, body.content, body.format, body.execute
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Sketch not found")
+    except PermissionDeniedError:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+
+
 class NodeDeleteInput(BaseModel):
     nodeIds: List[str]
 
@@ -58,6 +85,7 @@ class RelationshipDeleteInput(BaseModel):
 class NodeEditInput(BaseModel):
     nodeId: str
     updates: Dict[str, Any]
+    expected_version: int = Field(ge=0)
 
 
 class RelationshipEditInput(BaseModel):
@@ -116,7 +144,7 @@ def create_sketch(
     data: SketchCreate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         sketch_data = data.model_dump()
@@ -135,17 +163,17 @@ def create_sketch(
 @router.get("", response_model=List[SketchRead])
 def list_sketches(
     db: Session = Depends(get_db), current_user: Profile = Depends(get_current_user)
-):
+) -> Any:
     service = create_sketch_service(db)
     return service.list_sketches(current_user.id)
 
 
-@router.get("/{sketch_id}")
+@router.get("/{sketch_id}", response_model=SketchRead)
 def get_sketch_by_id(
     sketch_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.get_by_id(sketch_id, current_user.id)
@@ -161,7 +189,7 @@ def update_sketch(
     payload: SketchUpdate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.update(
@@ -173,12 +201,12 @@ def update_sketch(
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-@router.delete("/{id}", status_code=204)
+@router.delete("/{id}", status_code=204, response_model=None)
 def delete_sketch(
     id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         service.delete(id, current_user.id)
@@ -194,13 +222,25 @@ def delete_sketch(
 async def get_sketch_nodes(
     sketch_id: str,
     format: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    center_ids: List[str] | None = Query(default=None, max_length=100),
+    search: str | None = Query(default=None, max_length=200),
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     """Get the nodes and edges for a sketch."""
     service = create_sketch_service(db)
     try:
-        return service.get_graph(UUID(sketch_id), current_user.id, format)
+        return service.get_graph(
+            UUID(sketch_id),
+            current_user.id,
+            format,
+            limit=limit,
+            center_ids=center_ids,
+            search=search,
+            offset=offset,
+        )
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Graph not found")
     except PermissionDeniedError:
@@ -215,7 +255,7 @@ def add_node(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.add_node(UUID(sketch_id), current_user.id, node)
@@ -237,7 +277,7 @@ def add_edge(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.add_relationship(
@@ -265,12 +305,20 @@ def edit_node(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.update_node(
-            UUID(sketch_id), current_user.id, node_edit.nodeId, node_edit.updates
+            UUID(sketch_id),
+            current_user.id,
+            node_edit.nodeId,
+            node_edit.updates,
+            node_edit.expected_version,
         )
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionDeniedError:
@@ -287,7 +335,7 @@ def update_node_positions(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     """Update positions (x, y) for multiple nodes in batch."""
     service = create_sketch_service(db)
     try:
@@ -311,7 +359,7 @@ def delete_nodes(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.delete_nodes(UUID(sketch_id), current_user.id, nodes.nodeIds)
@@ -331,7 +379,7 @@ def delete_relationships(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.delete_relationships(
@@ -353,7 +401,7 @@ def edit_relationship(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.update_relationship(
@@ -379,7 +427,7 @@ def merge_nodes(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         node_data = newNode.data.model_dump() if newNode.data else {}
@@ -402,7 +450,7 @@ def get_related_nodes(
     node_id: str,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_sketch_service(db)
     try:
         return service.get_neighbors(UUID(sketch_id), current_user.id, node_id)
@@ -420,7 +468,7 @@ async def analyze_import_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     """Analyze an uploaded TXT or JSON file for import."""
     service = create_sketch_service(db)
     try:
@@ -468,7 +516,7 @@ async def execute_import(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     """Execute the import of entities into the sketch."""
     import json
 
@@ -533,7 +581,7 @@ async def export_sketch(
     format: str = "json",
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     """Export the sketch in the specified format."""
     service = create_sketch_service(db)
     try:

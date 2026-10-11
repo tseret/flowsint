@@ -1,4 +1,5 @@
 export interface Analysis {
+  version: number
   id: string // UUID
   title: string
   description?: string | null

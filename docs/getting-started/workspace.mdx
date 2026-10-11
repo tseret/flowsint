@@ -1,0 +1,111 @@
+# Investigation workspace
+
+Open a case to record questions, comments, and findings in **Investigation
+workspace**. Questions can be assigned to existing collaborators. Findings keep
+supporting evidence references and an analyst assessment; owners and admins can
+accept or reject them. Changing a finding or its evidence resets its review.
+The activity feed records the actor and changes, including collaborator and
+analysis edits. Existing investigation roles govern all access.
+
+Select an entity or relationship to attach a comment, question, or finding to
+that particular part of the graph. Collaboration items and activity are stored
+on the server. They are not evidence-file uploads: attach source references or
+observation descriptions in the supporting-evidence field.
+
+## Enrichment results
+
+**Recent enrichment runs** distinguishes results, no matches, partial results,
+missing credentials, quota limits, and failed runs. Expand it for input/output
+counts, elapsed time, and errors. The enricher launcher shows required credential
+names and recent run availability without revealing stored secret values.
+Provider errors are not evidence of no matches.
+
+Select entities and choose **Investigate selected entities** to run the passive
+investigation agent, which writes a cited report and draft findings for review.
+See the [investigation copilot](./copilot.mdx) guide for supported lookups,
+model configuration, and evidence review.
+
+Relationship details show the provider, run, retrieval time, source observation
+time (when supplied), and source reference. Repeated runs retain multiple
+observations. Retrieval time and observation time describe different events:
+retrieving historical DNS today does not make that resolution current.
+
+VirusTotal passive DNS follows up to five pages by default. `max_pages` accepts
+1–25 pages; truncation is reported as a partial result. Domain/IP reputation
+lookups use existing provider data. TLS results create certificate entities.
+Ports identify endpoints by host, number, and protocol.
+
+## Graph views
+
+Enrichment refresh keeps existing positions and filters. A dismissible change
+summary highlights added or updated entities and relationships. Evidence filters
+select provider, source observation date, and relationship type; unmatched
+relationships are hidden while entities remain visible.
+
+Infrastructure summaries let you collapse or expand CIDR, IP, and Port types.
+Save a named view to retain filters, positions, and display mode. Named views are
+personal to this account and sketch in this browser; they are not shared views
+and do not transfer automatically to another browser.
+
+## Large infrastructure investigations
+
+The initial graph loads at most 2,000 entities and 10,000 relationships. The
+**Loaded** row shows the full sketch counts and explicitly marks partial graphs.
+Expand that row to search the entire sketch by entity label or type; select a
+result to load up to 500 entities in its immediate neighborhood. Existing
+positions are retained. The relationship table also uses a bounded slice.
+
+Choose **Infrastructure** in the graph toolbar to aggregate loaded entities by
+recorded ASN, prefix, or domain relationships. Groups show entity, host, and
+flagged counts; expand a group to inspect its members. Aggregate nodes are
+presentation-only and cannot be edited or enriched. Group membership is not
+proof of common ownership. **Focus selection** shows a bounded neighborhood;
+**Load neighbors** retrieves additional stored neighbors from the server.
+
+Select 2–12 IP/domain entities and choose **Compare hosts** to compare observed
+ports, transports, fingerprints, providers, and observation times. **Compare
+dates** compares relationships with observations on two UTC calendar dates.
+Both use the loaded, filtered graph. Records without a valid observation date
+or an explicit timestamp timezone are excluded (date-only records are accepted).
+These are recorded-evidence comparisons,
+not reconstructed historical snapshots; an unobserved relationship is not
+evidence that it did not exist.
+
+Findings now expose evidence cards with run outcomes, provider details, source
+references, timestamps, and inspectable raw observations. Select **View linked
+entity** to retrieve the stored entity without needing it on the canvas.
+
+## Internal telemetry
+
+Choose **Import telemetry**, select a format, and paste JSON/NDJSON or choose a
+local file. **Preview** validates the entire batch before **Import** is enabled.
+Supported formats are normalized records, DNS, proxy, Zeek JSON (connection/DNS),
+Suricata EVE (DNS/flow/HTTP), and CloudTrail JSON (`Records` arrays are accepted).
+Unsupported record types reject the batch with a record index. Limit: 2 MiB,
+1,000 records, and 2,000 resulting relationships per import.
+
+For example, a normalized record is:
+
+```json
+{"source":"192.0.2.10","target":"example.org","relationship":"QUERIED_DOMAIN","timestamp":"2026-10-11T12:00:00Z"}
+```
+
+Timestamps must include a timezone (Zeek epoch timestamps are also supported).
+Entities may be strings or explicit `{ "type": "ip", "label": "192.0.2.10" }`
+objects; supported explicit types are `ip`, `domain`, `website`, and `phrase`.
+Imports retain source-record references and observation times on relationships.
+The importer discards unrelated fields and URL credentials, query strings, and
+fragments. It makes no external requests. Preview performs no graph writes;
+import requires edit permission and writes the validated batch transactionally.
+
+## Concurrent editing and setup
+
+Entity and analysis saves check the version you originally read. If another
+editor or enrichment changed the entity, your draft is retained and the save is
+rejected. Copy your draft before explicitly loading the latest version, then
+reconcile and save. Case-item edits also reject stale versions.
+
+Profile → **Setup diagnostics** checks service availability, database migration
+revision, API/worker connector inventories, and matching build revisions. See
+[local deployment](../developers/local-deployment.mdx) for matching images,
+upgrades, and backup/restore procedures.

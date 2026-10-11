@@ -12,7 +12,7 @@ from flowsint_enrichers import ENRICHER_REGISTRY
 from ..utils import to_json_serializable
 from .enricher_base import Enricher
 from .logger import Logger
-from .types import FlowBranch, FlowStep
+from .types import FlowBranch
 from .vault import VaultProtocol
 
 
@@ -174,46 +174,6 @@ class FlowOrchestrator(Enricher):
                 {"message": f"Failed to finalize execution log: {str(e)}"},
             )
 
-    def _save_enricher_branches(self) -> None:
-        """
-        Save the enricher branches to a JSON file for debugging and persistence.
-        """
-        try:
-            # Create a directory for storing enricher files if it doesn't exist
-            enricher_dir = "enricher_logs"
-            os.makedirs(enricher_dir, exist_ok=True)
-
-            # Create filename with sketch_id and scan_id
-            filename = f"enricher_branches_{self.sketch_id}_{self.scan_id}.json"
-            filepath = os.path.join(enricher_dir, filename)
-
-            # Serialize the enricher branches
-            serialized_branches = to_json_serializable(self.enricher_branches)
-
-            # Save to JSON file
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "sketch_id": self.sketch_id,
-                        "scan_id": self.scan_id,
-                        "timestamp": datetime.now().isoformat(),
-                        "enricher_branches": serialized_branches,
-                    },
-                    f,
-                    indent=2,
-                    ensure_ascii=False,
-                )
-
-            Logger.info(
-                self.sketch_id, {"message": f"Enricher branches saved to {filepath}"}
-            )
-
-        except Exception as e:
-            Logger.error(
-                self.sketch_id,
-                {"message": f"Failed to save enricher branches: {str(e)}"},
-            )
-
     def _load_enrichers(self) -> None:
         if not self.enricher_branches:
             raise ValueError("No enricher branches provided")
@@ -251,60 +211,6 @@ class FlowOrchestrator(Enricher):
                 params=enricher_params,
             )
             self.enrichers[node_id] = enricher
-
-    def resolve_reference(self, ref_value: str, results_mapping: Dict[str, Any]) -> Any:
-        """
-        Resolve a reference value from the results mapping.
-        References could be just the key name like "transformed_domain".
-        """
-        if ref_value in results_mapping:
-            return results_mapping[ref_value]
-        return None
-
-    # No callers anywhere in the codebase — dead code. Its two return
-    # statements disagree (a dict in the no-inputs-resolved branch, a single
-    # resolved value via the last loop-iteration's input_key otherwise),
-    # which List[Any] never matched; typed Any here rather than guessing at
-    # the intended behavior of code nothing exercises.
-    def prepare_enricher_inputs(
-        self, step: FlowStep, results_mapping: Dict[str, Any], initial_values: List[str]
-    ) -> Any:
-        """
-        Prepare the inputs for an enricher based on the references and previous results.
-        Handles single references, lists, and direct values.
-        """
-        inputs = {}
-
-        for input_key, input_ref in step.inputs.items():
-            # Cas 1 : une seule référence (string)
-            if isinstance(input_ref, str):
-                resolved = self.resolve_reference(input_ref, results_mapping)
-                if resolved is not None:
-                    inputs[input_key] = resolved
-
-            # Cas 2 : liste de références ou valeurs
-            elif isinstance(input_ref, list):
-                resolved_items = []
-                for item in input_ref:
-                    if isinstance(item, str) and item in results_mapping:
-                        resolved_items.append(results_mapping[item])
-                    else:
-                        resolved_items.append(item)  # valeur directe
-                inputs[input_key] = resolved_items
-
-            else:
-                # Cas inattendu (valeur directe ?)
-                inputs[input_key] = input_ref
-
-        # Si aucun input n'a été résolu, utiliser les valeurs initiales
-        if not inputs:
-            enricher = self.enrichers.get(step.nodeId)
-            if enricher:
-                primary_key = enricher.key()
-                return {primary_key: initial_values}
-        else:
-            enricher = self.enrichers.get(step.nodeId)
-        return inputs[input_key]
 
     def update_results_mapping(
         self,
@@ -461,7 +367,22 @@ class FlowOrchestrator(Enricher):
                             raise ValueError(
                                 f"Enricher '{enricher_name}' returned unsupported output format"
                             )
-                        # Cache the results
+                        summary = getattr(enricher, "execution_summary", {})
+                        step_result["summary"] = summary
+                        log_entry["summary"] = summary
+                        if summary.get("outcome") in {
+                            "failed",
+                            "missing_credentials",
+                            "quota_exceeded",
+                        }:
+                            raise ValueError(
+                                "; ".join(
+                                    issue["message"]
+                                    for issue in summary.get("errors", [])
+                                )
+                                or "Enrichment failed"
+                            )
+                        # Cache successful results only.
                         enricher_results_cache[cache_key] = outputs
                         log_entry["cache_hit"] = False
 

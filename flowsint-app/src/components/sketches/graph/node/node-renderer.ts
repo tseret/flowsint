@@ -299,6 +299,8 @@ export interface NodeRenderParams {
   highlightLinks: Set<string>
   hoverNode: string | null
   rc: RenderContext
+  // Discovery wave ring color; undefined = no ring
+  waveColor?: string
 }
 
 // --- Card layout constants ---
@@ -315,6 +317,7 @@ const CARD_BASE = {
 } as const
 
 const getCardScale = (node: GraphNode, forceSettings: GraphForceSettings) => {
+  if (node.nodeProperties.infrastructure_group) return 1.2
   const size = calculateNodeSize(node, forceSettings, true, 1)
   return Math.max(0.5, size / 5)
 }
@@ -384,7 +387,8 @@ const renderCardNode = (params: NodeRenderParams) => {
     theme,
     highlightNodes,
     hoverNode,
-    rc
+    rc,
+    waveColor
   } = params
   const isHighlighted = highlightNodes.has(node.id) || isSelected(node.id) || isCurrent(node.id)
   const isHovered = hoverNode === node.id || isCurrent(node.id)
@@ -395,7 +399,8 @@ const renderCardNode = (params: NodeRenderParams) => {
       : getDimmedColor(rc, node.nodeColor!)
     : node.nodeColor
 
-  const isOutlined = forceSettings.nodeOutlined?.value ?? false
+  const isOutlined =
+    !!node.nodeProperties.infrastructure_group || (forceSettings.nodeOutlined?.value ?? false)
   const {
     cardWidth,
     cardHeight,
@@ -415,6 +420,15 @@ const renderCardNode = (params: NodeRenderParams) => {
 
   const cardX = node.x - cardWidth / 2
   const cardY = node.y - cardHeight / 2
+
+  // Discovery wave ring, pushed outside the highlight ring so selection never hides it
+  if (waveColor) {
+    const w = (isHighlighted ? 4 : 2) / rc.globalScale
+    ctx.beginPath()
+    ctx.roundRect(cardX - w, cardY - w, cardWidth + w * 2, cardHeight + w * 2, borderRadius + w)
+    ctx.fillStyle = waveColor
+    ctx.fill()
+  }
 
   // Highlight ring
   if (isHighlighted) {
@@ -466,7 +480,7 @@ const renderCardNode = (params: NodeRenderParams) => {
   const iconY = node.y - iconSize / 2
 
   // Icon + text only when zoomed in enough
-  if (rc.shouldRenderDetails) {
+  if (rc.shouldRenderDetails || node.nodeProperties.infrastructure_group) {
     if (showIcons) {
       const iconColor = isOutlined ? (theme === 'dark' ? '#FFFFFF' : '#000000') : '#FFFFFF'
       const visual = getNodeVisual(node, iconColor)
@@ -529,7 +543,8 @@ const renderDotNode = (params: NodeRenderParams) => {
     theme,
     highlightNodes,
     hoverNode,
-    rc
+    rc,
+    waveColor
   } = params
   const size = calculateNodeSize(
     node,
@@ -541,6 +556,16 @@ const renderDotNode = (params: NodeRenderParams) => {
   const isHighlighted = highlightNodes.has(node.id) || isSelected(node.id) || isCurrent(node.id)
   const isHovered = hoverNode === node.id || isCurrent(node.id)
   const shape: NodeShape = node.nodeShape ?? 'circle'
+
+  // Discovery wave ring, pushed outside the highlight ring so selection never hides it
+  if (waveColor) {
+    const w = 2 / rc.globalScale
+    const offset = isHighlighted ? 3 / rc.globalScale : 0
+    drawNodePath(ctx, node.x, node.y, size + offset + w * 1.5, shape)
+    ctx.lineWidth = w
+    ctx.strokeStyle = waveColor
+    ctx.stroke()
+  }
 
   // Highlight ring
   if (isHighlighted) {
@@ -569,7 +594,7 @@ const renderDotNode = (params: NodeRenderParams) => {
   }
 
   // Zoomed out: mock label and early return
-  if (!rc.shouldRenderDetails) {
+  if (!rc.shouldRenderDetails && !node.nodeProperties.infrastructure_group) {
     drawMockLabel(ctx, node.x, node.y, size, rc)
     return
   }
@@ -591,7 +616,7 @@ const renderDotNode = (params: NodeRenderParams) => {
   }
 
   // Labels
-  if (showLabels) {
+  if (showLabels || node.nodeProperties.infrastructure_group) {
     drawNodeLabel(ctx, node, size, isHighlighted, forceSettings, rc)
   }
 }
@@ -606,6 +631,49 @@ export const renderNode = (params: NodeRenderParams) => {
     renderDotNode(params)
   } else {
     renderCardNode(params)
+  }
+}
+
+export function getNodeDisplayBounds(
+  node: GraphNode,
+  ctx: CanvasRenderingContext2D,
+  forceSettings: GraphForceSettings,
+  zoom: number,
+  showLabels: boolean
+) {
+  if (!(forceSettings.dotStyle?.value ?? true)) {
+    const { cardWidth, cardHeight } = getCardDimensions(node, ctx, forceSettings)
+    return {
+      left: node.x - cardWidth / 2,
+      right: node.x + cardWidth / 2,
+      top: node.y - cardHeight / 2,
+      bottom: node.y + cardHeight / 2
+    }
+  }
+  const size = calculateNodeSize(
+    node,
+    forceSettings,
+    zoom > CONSTANTS.ZOOM_NODE_DETAIL_THRESHOLD,
+    CONSTANTS.ZOOMED_OUT_SIZE_MULTIPLIER
+  )
+  let halfWidth = size,
+    bottom = size
+  if (showLabels || node.nodeProperties.infrastructure_group) {
+    const fontSize =
+      Math.max(CONSTANTS.MIN_FONT_SIZE, (CONSTANTS.NODE_FONT_SIZE * size) / 2 / zoom + 2) *
+      ((forceSettings.nodeLabelFontSize?.value ?? 50) / 100)
+    ctx.font = `${fontSize}px Sans-Serif`
+    halfWidth = Math.max(
+      halfWidth,
+      ctx.measureText(truncateText(node.nodeLabel || node.id, 58)).width / 2 + fontSize * 0.4
+    )
+    bottom = Math.max(bottom, size / 2 + fontSize * 2.1)
+  }
+  return {
+    left: node.x - halfWidth,
+    right: node.x + halfWidth,
+    top: node.y - size,
+    bottom: node.y + bottom
   }
 }
 

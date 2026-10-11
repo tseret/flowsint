@@ -6,7 +6,6 @@ import requests
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
-from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.individual import Individual
 from flowsint_types.ip import Ip
@@ -19,21 +18,6 @@ class IpToIntelligence(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Ip
     OutputType = Individual
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault: Optional[VaultProtocol] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     # @classmethod
     # def required_params(cls) -> bool:
@@ -59,12 +43,9 @@ class IpToIntelligence(Enricher):
     def category(cls) -> str:
         return "Ip"
 
-    @classmethod
-    def key(cls) -> str:
-        return "address"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
+        self._pairs = []
 
         api_key = self.get_secret("DEHASHED_API_KEY", os.getenv("DEHASHED_API_KEY"))
 
@@ -152,6 +133,7 @@ class IpToIntelligence(Enricher):
                             usernames=entry_username if entry_username else None,
                         )
                     )
+                    self._pairs.append((ip, results[-1]))
             except Exception as e:
                 Logger.error(
                     self.sketch_id,
@@ -168,18 +150,15 @@ class IpToIntelligence(Enricher):
         if not self._graph_service:
             return results
 
-        if input_data and self._graph_service:
-            for ip in input_data:
-                for individual in results:
-                    self.create_node(ip)
-                    self.create_node(individual)
+        for ip, individual in self._pairs:
+            self.create_node(ip)
+            self.create_node(individual)
 
-                    # Create relationship
-                    self.create_relationship(ip, individual, "CONNECTION_WITH")
-                    self.log_graph_message(
-                        f"(IpToIntelligence) Successfully found individual connections with {ip.address}."
-                    )
-
+            # Create relationship
+            self.create_relationship(ip, individual, "CONNECTION_WITH")
+            self.log_graph_message(
+                f"(IpToIntelligence) Successfully found individual connections with {ip.address}."
+            )
         return results
 
 

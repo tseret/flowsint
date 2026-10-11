@@ -3,6 +3,7 @@ import { SketchesSection } from './sketches-section'
 import { AnalysesSection } from './analyses-section'
 import { Investigation } from '@/types'
 import { usePermissions } from '@/hooks/use-can'
+import { CaseWorkspace } from './case-workspace'
 
 type CaseOverviewPageProps = {
   investigation: Investigation
@@ -18,6 +19,7 @@ export function CaseOverviewPage({ investigation }: CaseOverviewPageProps) {
         <div className="space-y-8">
           <SketchesSection sketches={investigation.sketches} canCreate={canCreate} />
           <AnalysesSection analyses={investigation.analyses} canCreate={canCreate} />
+          <CaseWorkspace investigationId={investigation.id} />
         </div>
       </div>
     </main>

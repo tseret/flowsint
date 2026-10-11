@@ -39,6 +39,7 @@ from .port import Port
 from .registry import TYPE_REGISTRY, flowsint_type, get_type, load_all_types
 from .reputation_score import ReputationScore
 from .risk_profile import RiskProfile
+from .routing_observation import RoutingObservation
 from .script import Script
 from .session import Session
 from .social_account import SocialAccount
@@ -84,6 +85,7 @@ __all__ = [
     "Port",
     "ReputationScore",
     "RiskProfile",
+    "RoutingObservation",
     "Script",
     "Session",
     "SocialAccount",

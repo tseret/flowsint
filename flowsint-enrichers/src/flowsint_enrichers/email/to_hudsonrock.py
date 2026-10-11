@@ -24,10 +24,6 @@ class HudsonRockToEmail(Enricher):
     def category(cls) -> str:
         return "Email"
 
-    @classmethod
-    def key(cls) -> str:
-        return "email"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
 

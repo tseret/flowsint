@@ -23,13 +23,12 @@ class IpToFraudScore(Enricher):
         self,
         sketch_id: Optional[str] = None,
         scan_id: Optional[str] = None,
-        vault=None,
+        vault: Optional[Any] = None,
         params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             sketch_id=sketch_id,
             scan_id=scan_id,
-            params_schema=self.get_params_schema(),
             vault=vault,
             params=params,
         )
@@ -64,10 +63,6 @@ class IpToFraudScore(Enricher):
     @classmethod
     def category(cls) -> str:
         return "Ip"
-
-    @classmethod
-    def key(cls) -> str:
-        return "address"
 
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         results: List[OutputType] = []
@@ -163,7 +158,7 @@ class IpToFraudScore(Enricher):
         return results
 
     def postprocess(
-        self, results: List[OutputType], input_data: List[InputType] = None
+        self, results: List[OutputType], input_data: Optional[List[InputType]] = None
     ) -> List[OutputType]:
         if not self._graph_service:
             return results

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import requests
 
@@ -16,21 +16,6 @@ class PhoneToCarrier(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Phone
     OutputType = Phone
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def get_params_schema(cls) -> List[Dict[str, Any]]:
@@ -52,12 +37,8 @@ class PhoneToCarrier(Enricher):
     def category(cls) -> str:
         return "phones"
 
-    @classmethod
-    def key(cls) -> str:
-        return "number"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
-        results: List[OutputType] = []
+        results: List[Any] = []
 
         api_key = self.get_secret("VERIPHONE_API_KEY", os.getenv("VERIPHONE_API_KEY"))
         Logger.debug(self.sketch_id, {"message": f"API key present: {bool(api_key)}"})
@@ -105,8 +86,8 @@ class PhoneToCarrier(Enricher):
         return results
 
     def postprocess(
-        self, results: List[OutputType], original_input: List[InputType]
-    ) -> List[OutputType]:
+        self, results: List[Any], original_input: List[InputType]
+    ) -> List[Any]:
         if not self._graph_service:
             return results
 

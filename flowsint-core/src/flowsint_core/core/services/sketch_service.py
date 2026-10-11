@@ -7,13 +7,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import UUID
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
 from ..graph import GraphNode, create_graph_service
+from ..graph.types import NodeVersionConflict
 from ..models import Sketch
 from ..repositories import InvestigationRepository, SketchRepository
 from .base import BaseService
 from .exceptions import (
+    ConflictError,
     DatabaseError,
     NotFoundError,
     ValidationError,
@@ -114,7 +117,15 @@ class SketchService(BaseService):
     # instead of the default {nds, rls}-shaped graph — same distinction the
     # frontend's sketchService.getGraphDataById overload encodes.
     def get_graph(
-        self, sketch_id: UUID, user_id: UUID, format: Optional[str] = None
+        self,
+        sketch_id: UUID,
+        user_id: UUID,
+        format: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        offset: int = 0,
     ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         self._get_sketch_with_permission(sketch_id, user_id, ["read"])
 
@@ -128,7 +139,11 @@ class SketchService(BaseService):
             enable_batching=False,
             type_resolver=resolver,
         )
-        graph_data = graph_service.get_sketch_graph()
+        graph_data = (
+            graph_service.get_graph_slice(center_ids, search, limit, offset)
+            if limit is not None
+            else graph_service.get_sketch_graph()
+        )
 
         if format == "inline":
             from flowsint_core.utils import get_inline_relationships
@@ -136,7 +151,74 @@ class SketchService(BaseService):
             return get_inline_relationships(graph_data.nodes, graph_data.edges)
 
         graph = graph_data.model_dump(mode="json", serialize_as_any=True)
-        return {"nds": graph["nodes"], "rls": graph["edges"]}
+        return {
+            "nds": graph["nodes"],
+            "rls": graph["edges"],
+            "total_nodes": graph["total_nodes"],
+            "total_edges": graph["total_edges"],
+            "truncated": graph["truncated"],
+        }
+
+    def import_telemetry(
+        self,
+        sketch_id: UUID,
+        user_id: UUID,
+        content: str,
+        format: str,
+        execute: bool = False,
+    ) -> Dict[str, Any]:
+        from datetime import datetime, timezone
+        from hashlib import sha256
+
+        from flowsint_core.core.graph.serializer import GraphSerializer
+        from flowsint_core.imports.telemetry import parse_telemetry
+
+        self._get_sketch_with_permission(
+            sketch_id, user_id, ["update" if execute else "read"]
+        )
+        observations = parse_telemetry(content, format)
+        batch_id = sha256(content.encode()).hexdigest()[:20]
+        if execute:
+            graph = create_graph_service(
+                sketch_id=str(sketch_id),
+                enable_batching=True,
+                provenance={"origin": "manual"},
+            )
+            # Keep the bounded import in one transaction, including relationship writes.
+            graph.set_batch_size(len(observations) * 3 + 1)
+            retrieved = datetime.now(timezone.utc).isoformat()
+            try:
+                for observation in observations:
+                    entities = [
+                        GraphSerializer.parse_flowsint_type(
+                            observation[key]["properties"], observation[key]["type"]
+                        )
+                        for key in ("source", "target")
+                    ]
+                    for entity in entities:
+                        graph.create_node_from_flowsint_type(entity)
+                    graph.create_relationship(
+                        entities[0],
+                        entities[1],
+                        observation["relationship"],
+                        {
+                            "provider": "Internal telemetry",
+                            "enricher": f"import_{format}",
+                            "observed_at": observation["observed_at"],
+                            "retrieved_at": retrieved,
+                            "source_ref": f"{observation['source_ref']}:{batch_id}",
+                        },
+                    )
+                graph.flush()
+            except Exception:
+                graph.repository.clear_batch()
+                raise
+        return {
+            "observation_count": len(observations),
+            "executed": execute,
+            "batch_id": batch_id,
+            "preview": observations[:50],
+        }
 
     def add_node(
         self, sketch_id: UUID, user_id: UUID, node: GraphNode
@@ -145,18 +227,23 @@ class SketchService(BaseService):
 
         try:
             graph_service = create_graph_service(
-                sketch_id=str(sketch_id), enable_batching=False
+                sketch_id=str(sketch_id),
+                enable_batching=False,
+                type_resolver=self._type_registry.build_type_resolver(user_id)
+                if self._type_registry
+                else None,
+                provenance={"origin": "manual"},
             )
             node_id = graph_service.create_node(node)
+            stored_nodes = graph_service.get_nodes_by_ids([node_id]) if node_id else []
         except Exception as e:
             print(e)
             raise DatabaseError(f"Database error: {str(e)}")
 
-        if not node_id:
+        if not stored_nodes:
             raise ValidationError("Node creation failed")
 
-        node.id = node_id
-        return {"status": "node added", "node": node}
+        return {"status": "node added", "node": stored_nodes[0]}
 
     def add_relationship(
         self,
@@ -187,17 +274,30 @@ class SketchService(BaseService):
         return {"status": "edge added", "edge": result}
 
     def update_node(
-        self, sketch_id: UUID, user_id: UUID, node_id: str, updates: Dict[str, Any]
+        self,
+        sketch_id: UUID,
+        user_id: UUID,
+        node_id: str,
+        updates: Dict[str, Any],
+        expected_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         self._get_sketch_with_permission(sketch_id, user_id, ["update"])
 
         try:
             graph_service = create_graph_service(
-                sketch_id=str(sketch_id), enable_batching=False
+                sketch_id=str(sketch_id),
+                enable_batching=False,
+                type_resolver=self._type_registry.build_type_resolver(user_id)
+                if self._type_registry
+                else None,
             )
             updated_element_id = graph_service.update_node(
-                element_id=node_id, updates=updates
+                element_id=node_id, updates=updates, expected_version=expected_version
             )
+        except NodeVersionConflict as e:
+            raise ConflictError(str(e)) from e
+        except PydanticValidationError as e:
+            raise ValidationError("Invalid entity properties") from e
         except Exception as e:
             print(f"Node update error: {e}")
             raise DatabaseError("Failed to update node")
@@ -205,7 +305,15 @@ class SketchService(BaseService):
         if not updated_element_id:
             raise NotFoundError("Node not found or not accessible")
 
-        return {"status": "node updated", "node": {"id": updated_element_id}}
+        return {
+            "status": "node updated",
+            "node": {
+                "id": updated_element_id,
+                "version": expected_version + 1
+                if expected_version is not None
+                else None,
+            },
+        }
 
     def update_node_positions(
         self, sketch_id: UUID, user_id: UUID, positions: List[Dict[str, Any]]
@@ -385,6 +493,7 @@ class SketchService(BaseService):
                 },
                 "nodes": [node.model_dump(mode="json") for node in graph_data.nodes],
                 "edges": [edge.model_dump(mode="json") for edge in graph_data.edges],
+                "truncated": graph_data.truncated,
             }
         else:
             raise ValidationError(f"Unsupported format: {format}")

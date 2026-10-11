@@ -22,12 +22,18 @@ type flagColor = keyof typeof flagColors
 // Same as NodeProperties above — backend-defined, not statically shaped.
 export type NodeMetadata = {
   [key: string]: unknown
+  // Provenance, set once when the node is first created.
+  origin?: 'manual' | 'enricher'
+  created_by_scan?: string
+  created_by_enricher?: string
+  created_at?: string
 }
 
 export type NodeShape = 'circle' | 'square' | 'hexagon' | 'triangle'
 
 export type GraphNode = {
   id: string
+  version?: number
   nodeType: string
   nodeLabel: string
   nodeProperties: NodeProperties
@@ -73,6 +79,19 @@ export type GraphEdge = {
   type?: string
   weight?: number
   confidence_level?: number | string
+  observations?: EvidenceObservation[]
+}
+
+export type EvidenceObservation = {
+  provider?: string
+  enricher?: string
+  scan_id?: string
+  retrieved_at?: string
+  observed_at?: string
+  source_ref?: string
+  finding_id?: string
+  association?: string
+  evidence?: unknown
 }
 
 // The imperative handle exposed by <ForceGraph2D<GraphNode, GraphEdge>

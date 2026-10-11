@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime
+from typing import AsyncIterator, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from flowsint_core.core.services import (
     PermissionDeniedError,
     create_log_service,
 )
+from flowsint_core.core.types import Event
 
 router = APIRouter()
 
@@ -27,11 +29,14 @@ def get_logs_by_sketch(
     since: datetime | None = None,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> list[Event]:
     """Get historical logs for a specific sketch with optional filtering."""
     service = create_log_service(db)
     try:
-        return service.get_logs_by_sketch(sketch_id, current_user.id, limit, since)
+        return cast(
+            list[Event],
+            service.get_logs_by_sketch(sketch_id, current_user.id, limit, since),
+        )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionDeniedError:
@@ -44,7 +49,7 @@ async def stream_events(
     sketch_id: str,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> EventSourceResponse:
     """Stream events for a specific sketch in real-time."""
     service = create_log_service(db)
     try:
@@ -55,16 +60,16 @@ async def stream_events(
     except PermissionDeniedError:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    async def event_generator():
+    async def event_generator() -> AsyncIterator[str]:
         channel = sketch_id
-        await event_emitter.subscribe(channel)
+        pubsub = await event_emitter.subscribe(channel)
         try:
             yield json.dumps({"event": "connected", "data": "Connected to log stream"})
             while True:
                 if await request.is_disconnected():
                     break
 
-                data = await event_emitter.get_message(channel)
+                data = await event_emitter.get_message(pubsub)
                 if data is None:
                     await asyncio.sleep(0.1)
                     continue
@@ -80,7 +85,7 @@ async def stream_events(
         except Exception as e:
             print(f"[EventEmitter] Error in stream_logs: {str(e)}")
         finally:
-            await event_emitter.unsubscribe(channel)
+            await event_emitter.unsubscribe(pubsub)
 
     return EventSourceResponse(
         event_generator(),
@@ -98,11 +103,13 @@ def delete_scan_logs(
     sketch_id: str,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> dict[str, str]:
     """Delete all logs for a specific sketch."""
     service = create_log_service(db)
     try:
-        return service.delete_logs_by_sketch(sketch_id, current_user.id)
+        return cast(
+            dict[str, str], service.delete_logs_by_sketch(sketch_id, current_user.id)
+        )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionDeniedError:
@@ -117,7 +124,7 @@ async def stream_sketch_status(
     sketch_id: str,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> EventSourceResponse:
     """Stream COMPLETED events for a specific sketch (for graph refresh)."""
     service = create_log_service(db)
     try:
@@ -127,9 +134,9 @@ async def stream_sketch_status(
     except PermissionDeniedError:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    async def status_generator():
+    async def status_generator() -> AsyncIterator[str]:
         channel = f"{sketch_id}_status"
-        await event_emitter.subscribe(channel)
+        pubsub = await event_emitter.subscribe(channel)
         try:
             yield json.dumps(
                 {"event": "connected", "data": "Connected to status stream"}
@@ -139,7 +146,7 @@ async def stream_sketch_status(
                 if await request.is_disconnected():
                     break
 
-                data = await event_emitter.get_message(channel)
+                data = await event_emitter.get_message(pubsub)
                 if data is None:
                     await asyncio.sleep(0.1)
                     continue
@@ -154,7 +161,7 @@ async def stream_sketch_status(
         except Exception as e:
             print(f"[EventEmitter] Error in stream_sketch_status: {str(e)}")
         finally:
-            await event_emitter.unsubscribe(channel)
+            await event_emitter.unsubscribe(pubsub)
 
     return EventSourceResponse(
         status_generator(),

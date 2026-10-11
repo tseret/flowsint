@@ -33,6 +33,7 @@ import {
   Settings
 } from 'lucide-react'
 import { Enricher, Flow } from '@/types'
+import { outcomeLabels } from '@/types/scan'
 import {
   EnricherParamsSheet,
   type PendingEnricherLaunch
@@ -64,6 +65,12 @@ const LaunchEnricherOrFlowPanel = memo(
       queryKey: ['enrichers', type],
       queryFn: () => enricherService.get(capitalizeFirstLetter(type))
     })
+    const readiness = useQuery({
+      queryKey: ['enrichers', 'readiness'],
+      queryFn: enricherService.readiness,
+      enabled: isOpen,
+      staleTime: 0
+    })
 
     const { data: flows, isLoading: isLoadingFlows } = useQuery({
       queryKey: ['flows', type],
@@ -74,7 +81,15 @@ const LaunchEnricherOrFlowPanel = memo(
       enrichers?.filter((enricher: Enricher) => {
         if (!enrichersSearchQuery.trim()) return true
         const query = enrichersSearchQuery.toLowerCase().trim()
-        const matchesName = enricher.name?.toLowerCase().includes(query)
+        const matchesName = [
+          enricher.name,
+          enricher.display_name,
+          enricher.purpose,
+          enricher.provider
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
         const matchesDescription = enricher.description?.toLowerCase().includes(query)
         return matchesName || matchesDescription
       }) || []
@@ -101,6 +116,7 @@ const LaunchEnricherOrFlowPanel = memo(
         // Check if it's an Enricher or Flow based on the active tab
         if (activeTab === 'enrichers') {
           const enricher = selectedEnricher as Enricher
+          if (readiness.data?.[enricher.name]?.credentials_configured === false) return
           if (enricher.params_schema?.length) {
             // Hand over to the params sheet; it launches on submit.
             setPendingLaunch({
@@ -125,7 +141,8 @@ const LaunchEnricherOrFlowPanel = memo(
       launchFlow,
       values,
       sketch_id,
-      handleCloseModal
+      handleCloseModal,
+      readiness.data
     ])
 
     const handleSubmitParams = useCallback(
@@ -235,14 +252,24 @@ const LaunchEnricherOrFlowPanel = memo(
                               ? 'border-primary bg-primary/5'
                               : 'hover:border-primary/50'
                           }`}
-                          onClick={() => handleSelectEnricher(enricher)}
+                          onClick={() => {
+                            if (readiness.data?.[enricher.name]?.credentials_configured !== false)
+                              handleSelectEnricher(enricher)
+                          }}
                         >
                           <CardHeader className="p-4">
                             <div className="flex flex-col space-y-4">
                               <div className="flex items-center gap-3">
-                                <RadioGroupItem value={enricher.name} id={enricher.name} />
+                                <RadioGroupItem
+                                  value={enricher.name}
+                                  id={enricher.name}
+                                  disabled={
+                                    readiness.data?.[enricher.name]?.credentials_configured ===
+                                    false
+                                  }
+                                />
                                 <CardTitle className="text-base flex items-center gap-1.5">
-                                  {enricher.name}
+                                  {enricher.display_name || enricher.name}
                                   {enricher.params_schema?.length ? (
                                     <span title="Requires configuration">
                                       <Settings className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -256,6 +283,59 @@ const LaunchEnricherOrFlowPanel = memo(
                                   {enricher.description || 'No description available'}
                                 </CardDescription>
                               )}
+                              <div className="text-xs pl-7 space-y-1 text-muted-foreground">
+                                <p>
+                                  {enricher.provider || 'Provider not specified'} ·{' '}
+                                  {enricher.passive === true
+                                    ? 'Passive lookup'
+                                    : enricher.passive === false
+                                      ? 'Contacts target infrastructure'
+                                      : 'Behavior not reviewed'}
+                                </p>
+                                <p>
+                                  {enricher.freshness}
+                                  {enricher.max_results
+                                    ? ` · Up to ${enricher.max_results} results`
+                                    : ''}
+                                </p>
+                                {readiness.data?.[enricher.name] ? (
+                                  <>
+                                    <p>
+                                      {readiness.data[enricher.name].credentials_configured
+                                        ? 'Credentials configured'
+                                        : `Missing credentials: ${readiness.data[enricher.name].missing_required_keys.join(', ')}`}
+                                    </p>
+                                    {readiness.data[enricher.name].last_run && (
+                                      <p>
+                                        Last run:{' '}
+                                        {outcomeLabels[
+                                          readiness.data[enricher.name].last_run!.outcome
+                                        ] || readiness.data[enricher.name].last_run!.outcome}
+                                        {readiness.data[enricher.name].last_run_at &&
+                                          ` · ${readiness.data[enricher.name].last_run_at}`}
+                                      </p>
+                                    )}
+                                    <p>
+                                      Last successful retrieval:{' '}
+                                      {readiness.data[enricher.name].last_success_at ||
+                                        'No successful run recorded'}
+                                    </p>
+                                    {readiness.data[enricher.name].last_run?.errors?.map(
+                                      (error, index) => (
+                                        <p key={index} className="text-destructive">
+                                          {typeof error === 'string' ? error : error.message}
+                                        </p>
+                                      )
+                                    )}
+                                  </>
+                                ) : (
+                                  <p>
+                                    {readiness.isLoading
+                                      ? 'Checking connector readiness…'
+                                      : 'Readiness unavailable'}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </CardHeader>
                         </Card>

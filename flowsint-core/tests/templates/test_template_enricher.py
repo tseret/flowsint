@@ -5,11 +5,11 @@ from typing import Optional
 
 import httpx
 import pytest
+import yaml
 
 from flowsint_core.core.template_enricher import (
     TemplateEnricher,
 )
-from flowsint_core.templates.loader.yaml_loader import YamlLoader
 from flowsint_core.templates.types import (
     Template,
     TemplateHttpRequest,
@@ -21,6 +21,10 @@ from flowsint_core.templates.types import (
 )
 
 TEST_DIR = Path(__file__).parent
+
+
+def load_template(name: str) -> Template:
+    return Template(**yaml.safe_load((TEST_DIR / name).read_text()))
 
 
 def create_test_template(
@@ -604,39 +608,53 @@ class TestTemplateEnricherFromYaml:
 
     def test_load_from_yaml(self):
         """Should load enricher from YAML file."""
-        template = YamlLoader.get_template_from_file(str(TEST_DIR / "example.yaml"))
+        template = load_template("example.yaml")
         enricher = TemplateEnricher(template=template, sketch_id="test")
         assert enricher.name() == "ip-api-lookup"
 
     def test_load_post_template(self):
         """Should load POST template from YAML."""
-        template = YamlLoader.get_template_from_file(
-            str(TEST_DIR / "example-post.yaml")
-        )
+        template = load_template("example-post.yaml")
         enricher = TemplateEnricher(template=template, sketch_id="test")
         assert enricher.request.method == "POST"
 
     def test_load_secrets_template(self):
         """Should load template with secrets from YAML."""
-        template = YamlLoader.get_template_from_file(
-            str(TEST_DIR / "example-secrets.yaml")
-        )
+        template = load_template("example-secrets.yaml")
         enricher = TemplateEnricher(template=template, sketch_id="test")
         assert len(enricher.params_schema) == 1
 
     def test_load_retry_template(self):
         """Should load template with retry config from YAML."""
-        template = YamlLoader.get_template_from_file(
-            str(TEST_DIR / "example-retry.yaml")
-        )
+        template = load_template("example-retry.yaml")
         enricher = TemplateEnricher(template=template, sketch_id="test")
         assert enricher.template.retry.max_retries == 5
 
     def test_load_array_template(self):
         """Should load template with array output from YAML."""
-        template = YamlLoader.get_template_from_file(
-            str(TEST_DIR / "example-array.yaml")
-        )
+        template = load_template("example-array.yaml")
         enricher = TemplateEnricher(template=template, sketch_id="test")
         assert enricher.template.output.is_array is True
         assert enricher.template.output.array_path == "data.results"
+
+
+@pytest.mark.asyncio
+async def test_template_failure_does_not_reassign_result_to_failed_input(
+    httpx_mock, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from flowsint_types import Ip
+
+    httpx_mock.add_response(status_code=404)
+    httpx_mock.add_response(json={"ip": "1.1.1.1"})
+    enricher = TemplateEnricher(template=create_test_template(), sketch_id="test")
+    enricher._graph_service = MagicMock()
+    relationship = MagicMock()
+    monkeypatch.setattr(enricher, "create_relationship", relationship)
+    inputs = [Ip(address="8.8.8.8"), Ip(address="1.1.1.1")]
+    results = await enricher.execute(inputs)
+    assert len(results) == 1
+    assert enricher.execution_summary["outcome"] == "partial"
+    assert relationship.call_args.args[0].address == "1.1.1.1"
+    assert relationship.call_args.args[1].address == "1.1.1.1"

@@ -26,20 +26,6 @@ class TemplateOutput(BaseModel):
     )
 
 
-class TemplateHttpRequestHeader(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    name: str = Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9\-]+$")
-    value: str = Field(min_length=1, max_length=4096)
-
-
-class TemplateHttpRequestParams(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    key: str = Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9\-]+$")
-    value: str = Field(min_length=1, max_length=4096)
-
-
 class TemplateRetryConfig(BaseModel):
     """Configuration for retry behavior on failed requests."""
 
@@ -123,22 +109,6 @@ class TemplateHttpRequest(BaseModel):
         ge=1.0,
         le=300.0,
         description="Request timeout in seconds",
-    )
-
-
-class TemplateHttpResponseMapping(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    key: str = Field(
-        min_length=1,
-        max_length=256,
-        pattern=r"^[A-Za-z0-9\-]+$",
-        description="The key (from the response format) to map.",
-    )
-    value: str = Field(
-        min_length=1,
-        max_length=4096,
-        description="The key of the field you want to feed (of the expected FlowsintType).",
     )
 
 

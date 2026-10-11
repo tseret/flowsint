@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, cast
 
 import aiohttp
 
@@ -17,21 +17,6 @@ class N8nConnector(Enricher):
     # Define types as class attributes - base class handles schema generation automatically
     InputType = Any
     OutputType = Any
-
-    def __init__(
-        self,
-        sketch_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        vault=None,
-        params: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(
-            sketch_id=sketch_id,
-            scan_id=scan_id,
-            params_schema=self.get_params_schema(),
-            vault=vault,
-            params=params,
-        )
 
     @classmethod
     def documentation(cls) -> str:
@@ -323,7 +308,7 @@ Check Flowsint logs for detailed debugging information.
                                 "message": f"n8n connector received response: {json.dumps(data)}"
                             },
                         )
-                        return data
+                        return cast(List[OutputType], data)
                     except json.JSONDecodeError as e:
                         Logger.warn(
                             self.sketch_id,

@@ -5,11 +5,22 @@ This module provides a repository pattern implementation for Neo4j,
 handling raw GraphDict object and operations with batching support.
 """
 
+import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from pydantic_core import to_jsonable_python
 
 from .connection import Neo4jConnection
-from .types import GraphDict
+from .types import GraphDict, NodeVersionConflict
+
+# Flattened node props written only when MERGE creates the node.
+CREATE_ONLY_PROPS = (
+    "nodeMetadata.created_at",
+    "nodeMetadata.origin",
+    "nodeMetadata.created_by_scan",
+    "nodeMetadata.created_by_enricher",
+)
 
 
 class Neo4jGraphRepository:
@@ -33,6 +44,33 @@ class Neo4jGraphRepository:
         self._connection = neo4j_connection or Neo4jConnection.get_instance()
         self._batch_operations: List[Tuple[str, Dict[str, Any]]] = []
         self._batch_size = 100
+        self.committed_operations = 0
+        self.on_commit: Optional[Callable[[int], None]] = None
+        self.max_new_entities: Optional[int] = None
+        self.new_entity_count = 0
+        self._seen_node_keys: set[tuple[str, str, str]] = set()
+
+    def _check_growth_budget(self, node_obj: GraphDict, sketch_id: str) -> None:
+        if self.max_new_entities is None:
+            return
+        identity = (
+            sketch_id,
+            str(node_obj.get("nodeType")),
+            str(node_obj.get("nodeKey", node_obj.get("nodeLabel"))),
+        )
+        if identity in self._seen_node_keys:
+            return
+        existing = self._connection.query(
+            "MATCH (n {sketch_id: $sketch_id, nodeKey: $node_key}) "
+            "WHERE $node_type IN labels(n) AND n.deleted_at IS NULL RETURN n LIMIT 1",
+            {"sketch_id": sketch_id, "node_key": identity[2], "node_type": identity[1]},
+        )
+        if not existing:
+            if self.new_entity_count >= self.max_new_entities:
+                raise ValueError("Investigation graph growth budget exhausted")
+            # Legacy nodes without canonical keys conservatively consume budget.
+            self.new_entity_count += 1
+        self._seen_node_keys.add(identity)
 
     def create_node(
         self,
@@ -55,8 +93,10 @@ class Neo4jGraphRepository:
         if not self._connection:
             return None
 
+        self._check_growth_budget(node_obj, sketch_id)
         query, params = self._build_node_query(node_obj, sketch_id)
         result = self._connection.query(query, params)
+        self._record_commit(1)
         return result[0]["id"] if result else None
 
     def create_relationship(
@@ -80,6 +120,7 @@ class Neo4jGraphRepository:
         query, params = self._build_relationship_query(rel_obj, sketch_id)
 
         self._connection.execute_write(query, params)
+        self._record_commit(1)
 
     def add_to_batch(self, operation_type: str, **kwargs: Any) -> None:
         """
@@ -90,6 +131,7 @@ class Neo4jGraphRepository:
             **kwargs: Operation parameters
         """
         if operation_type == "node":
+            self._check_growth_budget(kwargs["node_obj"], kwargs["sketch_id"])
             query, params = self._build_node_query(**kwargs)
         elif operation_type == "relationship":
             query, params = self._build_relationship_query(**kwargs)
@@ -107,19 +149,68 @@ class Neo4jGraphRepository:
     ) -> Tuple[str, Dict[str, Any]]:
         node_label = node_obj.get("nodeLabel")
         node_type = node_obj.get("nodeType")
+        created_at = datetime.now(timezone.utc).isoformat()
 
-        # paramètres Neo4j
+        # Creation timestamp and provenance are first-write-wins: enrichers re-create
+        # their input node, which must not relabel a seed or reorder discovery waves.
+        props = {k: v for k, v in node_obj.items() if k not in CREATE_ONLY_PROPS}
+        create_only = {prop: node_obj.get(prop) for prop in CREATE_ONLY_PROPS}
+        create_only["nodeMetadata.created_at"] = created_at
+
+        identity_fields = {
+            key: value
+            for key, value in node_obj.items()
+            if key.startswith("nodeProperties.")
+        }
+        # Adopt legacy nodes only when the canonical primary properties match.
+        from .serializer import GraphSerializer
+
+        try:
+            entity = GraphSerializer.parse_flowsint_type(
+                {
+                    key.removeprefix("nodeProperties."): value
+                    for key, value in identity_fields.items()
+                },
+                str(node_type),
+            )
+            # Stored properties are JSON-mode; IPv4Network etc. are not Neo4j values.
+            identity = to_jsonable_python(GraphSerializer.identity_properties(entity))
+        except (ValueError, TypeError):
+            identity = {"nodeLabel": node_label}
+        legacy_identity = {
+            ("nodeLabel" if key == "nodeLabel" else f"nodeProperties.{key}"): value
+            for key, value in identity.items()
+        }
         params = {
-            "props": node_obj,  # flat with keys containing "."
+            "props": {
+                key: value
+                for key, value in props.items()
+                if key not in ("version", "x", "y")
+            },
+            "create_only": create_only,
+            "x": node_obj.get("x") if node_obj.get("x") is not None else 100,
+            "y": node_obj.get("y") if node_obj.get("y") is not None else 100,
             "node_label": node_label,
+            "node_key": node_obj.get("nodeKey", node_label),
+            "legacy_identity": legacy_identity,
             "sketch_id": sketch_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
         }
 
         query = f"""
-        MERGE (n:{node_type} {{ nodeLabel: $node_label, sketch_id: $sketch_id }})
-        ON CREATE SET n.created_at = $created_at
+        OPTIONAL MATCH (legacy:{node_type} {{sketch_id: $sketch_id}})
+        WHERE legacy.nodeKey IS NULL AND all(key IN keys($legacy_identity) WHERE legacy[key] = $legacy_identity[key])
+        WITH head(collect(legacy)) AS legacy
+        FOREACH (old IN CASE WHEN legacy IS NULL THEN [] ELSE [legacy] END | SET old.nodeKey = $node_key)
+        MERGE (n:{node_type} {{ nodeKey: $node_key, sketch_id: $sketch_id }})
+        ON CREATE SET n.created_at = $created_at, n.x = $x, n.y = $y,
+            n.`nodeMetadata.created_by_scan` = $props.`nodeMetadata.scan_id`,
+            n += $create_only
+        // A scan that revives a soft-deleted node owns it; later scans only restamp scan_id.
+        ON MATCH SET n.`nodeMetadata.created_by_scan` = CASE WHEN n.deleted_at IS NULL
+            THEN n.`nodeMetadata.created_by_scan` ELSE $props.`nodeMetadata.scan_id` END
         SET n += $props
+        SET n.version = coalesce(n.version, 0) + 1
         SET n.deleted_at = null
         RETURN elementId(n) AS id
         """
@@ -141,16 +232,26 @@ class Neo4jGraphRepository:
             "from_label": from_label,
             "to_label": to_label,
             "sketch_id": sketch_id,
-            "props": rel_obj,
+            "props": {
+                key: value for key, value in rel_obj.items() if key != "observation"
+            },
+            "from_key": rel_obj.get("from_key"),
+            "to_key": rel_obj.get("to_key"),
+            "observation": json.dumps(
+                rel_obj["observation"], sort_keys=True, default=str
+            )
+            if rel_obj.get("observation")
+            else None,
         }
 
         query = f"""
-        MATCH (from:{from_type} {{nodeLabel: $from_label, sketch_id: $sketch_id}})
-        WHERE from.deleted_at IS NULL
-        MATCH (to:{to_type} {{nodeLabel: $to_label, sketch_id: $sketch_id}})
-        WHERE to.deleted_at IS NULL
+        MATCH (from:{from_type} {{sketch_id: $sketch_id}})
+        WHERE from.deleted_at IS NULL AND (from.nodeKey = $from_key OR (from.nodeKey IS NULL AND from.nodeLabel = $from_label))
+        MATCH (to:{to_type} {{sketch_id: $sketch_id}})
+        WHERE to.deleted_at IS NULL AND (to.nodeKey = $to_key OR (to.nodeKey IS NULL AND to.nodeLabel = $to_label))
         MERGE (from)-[r:{rel_label} {{sketch_id: $sketch_id}}]->(to)
         SET r += $props
+        SET r.observations = CASE WHEN $observation IS NULL OR $observation IN coalesce(r.observations, []) THEN coalesce(r.observations, []) ELSE coalesce(r.observations, []) + [$observation] END
         SET r.deleted_at = null
         """
 
@@ -167,8 +268,14 @@ class Neo4jGraphRepository:
 
         try:
             self._connection.execute_batch(self._batch_operations)
+            self._record_commit(len(self._batch_operations))
         finally:
             self._batch_operations.clear()
+
+    def _record_commit(self, count: int) -> None:
+        self.committed_operations += count
+        if self.on_commit is not None:
+            self.on_commit(self.committed_operations)
 
     def clear_batch(self) -> None:
         """Clear the batch without executing."""
@@ -392,7 +499,11 @@ class Neo4jGraphRepository:
             return {"edges_created": 0, "errors": errors}
 
     def update_node(
-        self, element_id: str, updates: GraphDict, sketch_id: str
+        self,
+        element_id: str,
+        updates: GraphDict,
+        sketch_id: str,
+        expected_version: Optional[int] = None,
     ) -> Optional[str]:
         if not self._connection:
             return None
@@ -400,17 +511,37 @@ class Neo4jGraphRepository:
         query = """
         MATCH (n)
         WHERE elementId(n) = $element_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+        SET n.version = coalesce(n.version, 0)
+        WITH n
+        WHERE NOT $check_version OR n.version = $expected_version
         SET n += $props
+        SET n.version = n.version + 1
         RETURN elementId(n) AS id
         """
 
         params = {
             "element_id": element_id,
             "sketch_id": sketch_id,
-            "props": updates,
+            "props": {
+                key: value
+                for key, value in updates.items()
+                if key
+                not in ("version", "sketch_id", "nodeType", "deleted_at", "created_at")
+            },
+            "expected_version": expected_version
+            if expected_version is not None
+            else -1,
+            "check_version": expected_version is not None,
         }
 
         result = self._connection.query(query, params)
+        if not result and expected_version is not None:
+            exists = self._connection.query(
+                "MATCH (n) WHERE elementId(n) = $element_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL RETURN elementId(n) AS id",
+                {"element_id": element_id, "sketch_id": sketch_id},
+            )
+            if exists:
+                raise NodeVersionConflict("This entity changed. Reload before saving.")
         return result[0]["id"] if result else None
 
     def delete_nodes(self, node_ids: List[str], sketch_id: str) -> int:
@@ -512,9 +643,7 @@ class Neo4jGraphRepository:
         )
         return result[0]["deleted_count"] if result else 0
 
-    def get_sketch_graph(
-        self, sketch_id: str, limit: int = 100000
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    def get_sketch_graph(self, sketch_id: str, limit: int = 100000) -> Dict[str, Any]:
         """
         Get all nodes and edges for a sketch.
 
@@ -536,15 +665,18 @@ class Neo4jGraphRepository:
         WITH n
         WHERE n IS NOT NULL
         RETURN elementId(n) as id, labels(n) as labels, properties(n) as data
+        ORDER BY elementId(n)
         LIMIT $limit
         """
         nodes_result = self._connection.query(
-            nodes_query, {"sketch_id": sketch_id, "limit": limit}
+            nodes_query, {"sketch_id": sketch_id, "limit": limit + 1}
         )
 
         if not nodes_result:
             return {"nodes": [], "edges": []}
 
+        truncated = len(nodes_result) > limit
+        nodes_result = nodes_result[:limit]
         node_ids = [record["id"] for record in nodes_result]
         # Get all edges between these nodes
         rels_query = """
@@ -557,7 +689,104 @@ class Neo4jGraphRepository:
                elementId(b) as target, properties(r) as data
         """
         rels_result = self._connection.query(rels_query, {"node_ids": node_ids})
-        return {"nodes": nodes_result, "edges": rels_result or []}
+        return {
+            "nodes": nodes_result,
+            "edges": rels_result or [],
+            "truncated": truncated,
+        }
+
+    def get_graph_slice(
+        self,
+        sketch_id: str,
+        center_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        limit: int = 150,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Bound materialization, including dense relationships, before serialization."""
+        if not 1 <= limit <= 2000 or offset < 0 or len(center_ids or []) > 100:
+            raise ValueError(
+                "Graph slice requires 1–2000 entities and at most 100 centers"
+            )
+        if not self._connection:
+            return {
+                "nodes": [],
+                "edges": [],
+                "total_nodes": 0,
+                "total_edges": 0,
+                "truncated": False,
+            }
+        params = {
+            "sketch_id": sketch_id,
+            "centers": center_ids or [],
+            "search": (search or "").lower()[:200],
+            "limit": limit + 1,
+            "offset": offset,
+        }
+        counts = self._connection.query(
+            """
+            MATCH (n) WHERE n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+            RETURN count(n) AS total_nodes
+        """,
+            params,
+        )
+        total_nodes = counts[0]["total_nodes"] if counts else 0
+        counts = self._connection.query(
+            """
+            MATCH (a)-[r]->(b)
+            WHERE a.sketch_id = $sketch_id AND b.sketch_id = $sketch_id
+              AND a.deleted_at IS NULL AND b.deleted_at IS NULL AND r.deleted_at IS NULL
+            RETURN count(r) AS total_edges
+        """,
+            params,
+        )
+        total_edges = counts[0]["total_edges"] if counts else 0
+        nodes = (
+            self._connection.query(
+                """
+            MATCH (n) WHERE n.sketch_id = $sketch_id AND n.deleted_at IS NULL
+            AND ($search = '' OR toLower(coalesce(n.nodeLabel, '')) CONTAINS $search
+                 OR toLower(coalesce(n.nodeType, '')) CONTAINS $search)
+            AND (size($centers) = 0 OR elementId(n) IN $centers OR EXISTS {
+                MATCH (n)-[r]-(c) WHERE elementId(c) IN $centers
+                AND c.sketch_id = $sketch_id AND c.deleted_at IS NULL AND r.deleted_at IS NULL
+            })
+            RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS data
+            ORDER BY CASE WHEN elementId(n) IN $centers THEN 0 ELSE 1 END, elementId(n)
+            SKIP $offset LIMIT $limit
+        """,
+                params,
+            )
+            or []
+        )
+        more_nodes = len(nodes) > limit
+        nodes = nodes[:limit]
+        ids = [n["id"] for n in nodes]
+        edge_limit = 10000
+        edges = (
+            self._connection.query(
+                """
+            UNWIND $ids AS id MATCH (a)-[r]->(b)
+            WHERE elementId(a) = id AND elementId(b) IN $ids AND r.deleted_at IS NULL
+            RETURN elementId(r) AS id, type(r) AS type, elementId(a) AS source,
+                   elementId(b) AS target, properties(r) AS data
+            ORDER BY elementId(r) LIMIT $edge_limit
+        """,
+                {"ids": ids, "edge_limit": edge_limit + 1},
+            )
+            if ids
+            else []
+        )
+        edges = edges or []
+        return {
+            "nodes": nodes,
+            "edges": edges[:edge_limit],
+            "total_nodes": total_nodes,
+            "total_edges": total_edges,
+            "truncated": more_nodes
+            or len(nodes) < total_nodes
+            or len(edges) > edge_limit,
+        }
 
     def update_relationship(
         self, element_id: str, rel_obj: GraphDict, sketch_id: str
@@ -715,7 +944,7 @@ class Neo4jGraphRepository:
         UNWIND $node_ids AS node_id
         MATCH (n)
         WHERE elementId(n) = node_id AND n.sketch_id = $sketch_id AND n.deleted_at IS NULL
-        RETURN properties(n) as data
+        RETURN elementId(n) AS id, properties(n) as data
         """
 
         result = self._connection.query(
@@ -747,7 +976,7 @@ class Neo4jGraphRepository:
             return None
 
         node_type = new_node_data.get("type", "Node")
-        properties = {}
+        properties: Dict[str, Any] = {}
         properties["sketch_id"] = sketch_id
 
         is_reusing_node = new_node_id and new_node_id in old_node_ids
@@ -760,7 +989,11 @@ class Neo4jGraphRepository:
             SET {set_clause}
             RETURN elementId(n) as newElementId
             """
-            params = {"nodeId": new_node_id, "sketch_id": sketch_id, **properties}
+            params: Dict[str, Any] = {
+                "nodeId": new_node_id,
+                "sketch_id": sketch_id,
+                **properties,
+            }
         else:
             properties["created_at"] = datetime.now(timezone.utc).isoformat()
             create_query = f"""
@@ -774,7 +1007,7 @@ class Neo4jGraphRepository:
         if not result:
             return None
 
-        new_node_element_id = result[0]["newElementId"]
+        new_node_element_id: str = result[0]["newElementId"]
 
         copy_relationships_query = """
         MATCH (new) WHERE elementId(new) = $newElementId
@@ -838,7 +1071,7 @@ class Neo4jGraphRepository:
                 },
             )
 
-        return new_node_element_id
+        return str(new_node_element_id)
 
     def get_neighbors(self, node_id: str, sketch_id: str) -> Dict[str, Any]:
         """
@@ -977,11 +1210,11 @@ class Neo4jGraphRepository:
             record = result.single()
             return record["total"] if record else 0
 
-    def __enter__(self):
+    def __enter__(self) -> "Neo4jGraphRepository":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit - auto-flush batch."""
         if exc_type is None:
             self.flush_batch()

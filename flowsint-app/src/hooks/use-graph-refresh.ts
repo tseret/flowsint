@@ -3,26 +3,23 @@ import { useGraphControls } from '@/stores/graph-controls-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { EventLevel } from '@/types'
 import { connectSSE } from '@/api/sse'
+import { useGraphStore } from '@/stores/graph-store'
+import { useQueryClient } from '@tanstack/react-query'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export function useGraphRefresh(sketch_id: string | undefined) {
   const refetchGraph = useGraphControls((s) => s.refetchGraph)
-  const regenerateLayout = useGraphControls((s) => s.regenerateLayout)
-  const currentLayoutType = useGraphControls((s) => s.currentLayoutType)
   const token = useAuthStore((s) => s.token)
+  const queryClient = useQueryClient()
 
   // Use refs to avoid reconnecting SSE when functions change
   const refetchGraphRef = useRef(refetchGraph)
-  const regenerateLayoutRef = useRef(regenerateLayout)
-  const currentLayoutTypeRef = useRef(currentLayoutType)
 
   // Keep refs updated
   useEffect(() => {
     refetchGraphRef.current = refetchGraph
-    regenerateLayoutRef.current = regenerateLayout
-    currentLayoutTypeRef.current = currentLayoutType
-  }, [refetchGraph, regenerateLayout, currentLayoutType])
+  }, [refetchGraph])
 
   useEffect(() => {
     if (!sketch_id || !token) return
@@ -35,18 +32,28 @@ export function useGraphRefresh(sketch_id: string | undefined) {
         try {
           const event = JSON.parse(raw.data as string) as any
           // Only handle COMPLETED events
-          if (event.type === EventLevel.COMPLETED) {
+          if (
+            event.type === EventLevel.COMPLETED ||
+            event.type === EventLevel.FAILED ||
+            event.payload?.summary
+          ) {
+            void queryClient.invalidateQueries({ queryKey: ['scans', 'list', sketch_id] })
+            void queryClient.invalidateQueries({ queryKey: ['enrichers', 'readiness'] })
             const refetch = refetchGraphRef.current
-            const regenerate = regenerateLayoutRef.current
-            const layoutType = currentLayoutTypeRef.current
 
             if (typeof refetch !== 'function') return
 
-            // Refetch graph data, then regenerate layout if one is active
+            useGraphStore.getState().setPendingRefresh(true)
             refetch(() => {
-              if (layoutType && typeof regenerate === 'function') {
-                regenerate(layoutType)
-              }
+              const state = useGraphStore.getState()
+              // React Query can retain identical data references after an empty run.
+              if (state.pendingRefresh)
+                state.setChanges({
+                  addedNodes: [],
+                  updatedNodes: [],
+                  addedEdges: [],
+                  updatedEdges: []
+                })
             })
           }
         } catch (error) {
@@ -56,5 +63,5 @@ export function useGraphRefresh(sketch_id: string | undefined) {
     })
 
     return dispose
-  }, [sketch_id, token])
+  }, [sketch_id, token, queryClient])
 }

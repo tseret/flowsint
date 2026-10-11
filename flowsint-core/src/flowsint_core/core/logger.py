@@ -12,6 +12,7 @@ Architecture:
 import atexit
 import threading
 import time
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from queue import Empty, Queue
 from typing import Dict, List, Optional, Tuple, Union
@@ -21,6 +22,11 @@ from ..tasks.event import emit_event_task
 from .enums import EventLevel
 from .models import Log
 from .postgre_db import get_db
+
+# One capture per async execution; nested and concurrent enrichers stay isolated.
+enrichment_errors: ContextVar[Optional[List[str]]] = ContextVar(
+    "enrichment_errors", default=None
+)
 
 
 class LoggerSingleton:
@@ -215,6 +221,9 @@ class LoggerSingleton:
             level: Log level
             content: Log content/message
         """
+        captured = enrichment_errors.get()
+        if level == EventLevel.FAILED and captured is not None:
+            captured.append(str(content.get("message", "Provider error")))
         # Capture timestamp and sequence at the time of logging (not insertion)
         sequence = self._get_next_sequence()
         timestamp = datetime.now(timezone.utc)
@@ -257,11 +266,19 @@ class LoggerSingleton:
         """Log a success message."""
         self._log(sketch_id, EventLevel.SUCCESS, message)
 
-    def completed(self, sketch_id: Union[str, UUID], message: Dict) -> None:
-        """Log a completed message."""
+    def completed(
+        self, sketch_id: Union[str, UUID], message: Dict, *, publish_status: bool = True
+    ) -> None:
+        """Log a completed message, optionally deferring the status until persistence."""
         self._log(sketch_id, EventLevel.COMPLETED, message)
+        if publish_status:
+            self.status(sketch_id, EventLevel.COMPLETED, message)
 
-        # Also publish to status channel for graph refresh
+    def status(
+        self, sketch_id: Union[str, UUID], level: EventLevel, message: Dict
+    ) -> None:
+        """Publish a terminal status without turning intermediate log errors into refreshes."""
+        # Publish to status channel for graph refresh
         try:
             import uuid
 
@@ -269,7 +286,7 @@ class LoggerSingleton:
             from ..tasks.event import emit_status_event_task
 
             emit_status_event_task.apply(
-                args=[temp_log_id, str(sketch_id), EventLevel.COMPLETED, message]
+                args=[temp_log_id, str(sketch_id), level, message]
             )
         except Exception as e:
             import logging

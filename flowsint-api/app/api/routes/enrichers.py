@@ -2,12 +2,20 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from flowsint_core.core.celery import celery
 from flowsint_core.core.graph import create_graph_service
-from flowsint_core.core.models import Profile
+from flowsint_core.core.models import (
+    Investigation,
+    InvestigationUserRole,
+    Key,
+    Profile,
+    Scan,
+    Sketch,
+)
 from flowsint_core.core.postgre_db import get_db
 from flowsint_core.core.services import (
     NotFoundError,
@@ -52,6 +60,72 @@ def get_enrichers(
         category, current_user.id, ENRICHER_REGISTRY
     )
     return enrichers
+
+
+@router.get("/readiness")
+def get_readiness(
+    db: Session = Depends(get_db),
+    current_user: Profile = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Credential presence and recent accessible runs; secret values stay in Vault."""
+    available_keys = set(
+        db.execute(select(Key.name).where(Key.owner_id == current_user.id)).scalars()
+    )
+    memberships = select(InvestigationUserRole.investigation_id).where(
+        InvestigationUserRole.user_id == current_user.id
+    )
+    # ponytail: bounded recent history, indexed per-provider history if cases exceed 500 runs.
+    recent = (
+        db.query(Scan)
+        .join(Sketch, Sketch.id == Scan.sketch_id)
+        .join(Investigation, Investigation.id == Sketch.investigation_id)
+        .filter(
+            or_(
+                Investigation.owner_id == current_user.id,
+                Investigation.id.in_(memberships),
+            )
+        )
+        .order_by(Scan.started_at.desc())
+        .limit(500)
+        .all()
+    )
+    readiness: dict[str, Any] = {}
+    for enricher in get_enrichers(None, db, current_user):
+        name = enricher["name"] if isinstance(enricher, dict) else enricher.name
+        schema = (
+            enricher.get("params_schema", [])
+            if isinstance(enricher, dict)
+            else enricher.params_schema
+        )
+        missing = [
+            param["name"]
+            for param in schema
+            if param.get("type") == "vaultSecret"
+            and param.get("required")
+            and param["name"] not in available_keys
+        ]
+        readiness[name] = {
+            "credentials_configured": not missing,
+            "missing_required_keys": missing,
+            "last_run": None,
+            "last_run_at": None,
+            "last_success_at": None,
+        }
+    for run in recent:
+        summary = getattr(run, "summary", None) or {}
+        entry = readiness.get(str(summary.get("enricher", "")))
+        if entry is None:
+            continue
+        timestamp = run.started_at.isoformat() if run.started_at else None
+        if entry["last_run"] is None:
+            entry["last_run"] = summary
+            entry["last_run_at"] = timestamp
+        if entry["last_success_at"] is None and summary.get("outcome") in (
+            "results",
+            "no_matches",
+        ):
+            entry["last_success_at"] = timestamp
+    return readiness
 
 
 @router.post("/{enricher_name}/launch")

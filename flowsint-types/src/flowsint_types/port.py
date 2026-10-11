@@ -10,6 +10,10 @@ from .registry import flowsint_type
 class Port(FlowsintType):
     """Represents an open network port related to an IP address."""
 
+    host: Optional[str] = Field(
+        None, description="Host address of this network endpoint", title="Host"
+    )
+
     number: int = Field(
         ...,
         description="Port number",
@@ -49,7 +53,7 @@ class Port(FlowsintType):
         return self
 
     @classmethod
-    def from_string(cls, line: str):
+    def from_string(cls, line: str) -> Self:
         """Parse a port from a raw string."""
         return cls(number=int(line.strip()))
 

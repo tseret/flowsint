@@ -74,13 +74,13 @@ def get_flows(
     category: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_flow_service(db)
     return service.get_all_flows(category, current_user.id)
 
 
-@router.get("/raw_materials")
-async def get_material_list():
+@router.get("/raw_materials", response_model=None)
+async def get_material_list() -> Dict[str, Any]:
     enrichers = ENRICHER_REGISTRY.list_by_categories()
     enricher_categories = {
         category: [
@@ -130,8 +130,8 @@ async def get_material_list():
     return {"items": flattened_enrichers}
 
 
-@router.get("/input_type/{input_type}")
-async def get_material_by_input_type(input_type: str):
+@router.get("/input_type/{input_type}", response_model=None)
+async def get_material_by_input_type(input_type: str) -> Dict[str, Any]:
     enrichers = ENRICHER_REGISTRY.list_by_input_type(input_type)
     return {"items": enrichers}
 
@@ -141,7 +141,7 @@ def create_flow(
     payload: FlowCreate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_flow_service(db)
     return service.create(
         name=payload.name,
@@ -157,7 +157,7 @@ def get_flow_by_id(
     flow_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_flow_service(db)
     try:
         return service.get_by_id(flow_id, current_user.id)
@@ -173,7 +173,7 @@ def update_flow(
     payload: FlowUpdate,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Any:
     service = create_flow_service(db)
     try:
         return service.update(
@@ -190,7 +190,7 @@ def delete_flow(
     flow_id: UUID,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> None:
     service = create_flow_service(db)
     try:
         service.delete(flow_id, current_user.id)
@@ -201,13 +201,13 @@ def delete_flow(
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-@router.post("/{flow_id}/launch")
+@router.post("/{flow_id}/launch", response_model=None)
 async def launch_flow(
     flow_id: str,
     payload: launchFlowPayload,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     service = create_flow_service(db)
     try:
         flow = service.get_by_id(UUID(flow_id), current_user.id)
@@ -260,7 +260,7 @@ async def launch_flow(
 @router.post("/{flow_id}/compute", response_model=FlowComputationResponse)
 def compute_flows(
     request: FlowComputationRequest, current_user: Profile = Depends(get_current_user)
-):
+) -> Any:
     initial_data = generate_sample_data(request.inputType or "string")
     flow_branches = compute_flow_branches(initial_data, request.nodes, request.edges)
     return FlowComputationResponse(flowBranches=flow_branches, initialData=initial_data)
@@ -319,9 +319,9 @@ def compute_flow_branches(
     node_map = {node.id: node for node in nodes}
     branches = []
     branch_counter = 0
-    enricher_outputs = {}
+    enricher_outputs: Dict[str, Dict[str, Any]] = {}
 
-    def calculate_path_length(start_node: str, visited: set = None) -> int:
+    def calculate_path_length(start_node: str, visited: Optional[set] = None) -> float:
         if visited is None:
             visited = set()
         if start_node in visited:
@@ -369,7 +369,7 @@ def compute_flow_branches(
         path: List[str],
         branch_visited: set,
         steps: List[FlowStep],
-        parent_outputs: Dict[str, Any] = None,
+        parent_outputs: Optional[Dict[str, Any]] = None,
     ) -> None:
         nonlocal branch_counter
 
@@ -484,7 +484,7 @@ def compute_flow_branches(
 
 def process_node_data(node: FlowNode, inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Process node data based on node type and inputs"""
-    outputs = {}
+    outputs: Dict[str, Any] = {}
     output_types = node.data["outputs"].get("properties", [])
 
     for output in output_types:
@@ -513,18 +513,6 @@ def process_node_data(node: FlowNode, inputs: Dict[str, Any]) -> Dict[str, Any]:
             outputs[output_name] = {
                 "username": inputs.get("input", "user123"),
                 "platforms": ["twitter", "github", "linkedin"],
-            }
-        elif class_name == "HoleheEnricher":
-            outputs[output_name] = {
-                "email": inputs.get("input", "user@example.com"),
-                "exists": True,
-                "platforms": ["gmail", "github"],
-            }
-        elif class_name == "SireneEnricher":
-            outputs[output_name] = {
-                "name": inputs.get("input", "Example Corp"),
-                "siret": "12345678901234",
-                "address": "1 Example Street",
             }
         else:
             outputs[output_name] = inputs.get("input") or f"flowed_{output_name}"

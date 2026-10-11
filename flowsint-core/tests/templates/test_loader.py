@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from flowsint_core.templates.loader.yaml_loader import (
     SSRFError,
@@ -17,12 +18,17 @@ from flowsint_core.templates.types import Template
 TEST_DIR = Path(__file__).parent
 
 
-class TestYamlLoader:
-    """Tests for YAML loading and template parsing."""
+def load_template(name: str) -> Template:
+    """Parse a fixture the same way production does: Template(**content)."""
+    return Template(**yaml.safe_load((TEST_DIR / name).read_text()))
+
+
+class TestTemplateParsing:
+    """Tests for parsing YAML fixtures into Template."""
 
     def test_yaml_loader_valid_template(self):
         """Load a valid template and verify its properties."""
-        file = YamlLoader.get_template_from_file(str(TEST_DIR / "example.yaml"))
+        file = load_template("example.yaml")
         assert isinstance(file, Template)
         assert file.name == "ip-api-lookup"
         assert file.category == "Ip"
@@ -34,31 +40,31 @@ class TestYamlLoader:
     def test_yaml_loader_invalid_method(self):
         """Invalid HTTP method should raise ValueError."""
         with pytest.raises(ValueError) as exc_info:
-            YamlLoader.get_template_from_file(str(TEST_DIR / "example-invalid.yaml"))
-        assert "not present in" in str(exc_info.value).lower()
+            load_template("example-invalid.yaml")
+        assert "'get' or 'post'" in str(exc_info.value).lower()
 
     def test_yaml_loader_post_method(self):
         """POST method should be allowed."""
-        file = YamlLoader.get_template_from_file(str(TEST_DIR / "example-post.yaml"))
+        file = load_template("example-post.yaml")
         assert file.request.method == "POST"
 
     def test_yaml_loader_with_secrets(self):
         """Template with secrets should parse correctly."""
-        file = YamlLoader.get_template_from_file(str(TEST_DIR / "example-secrets.yaml"))
+        file = load_template("example-secrets.yaml")
         assert len(file.secrets) == 1
         assert file.secrets[0].name == "API_KEY"
         assert file.secrets[0].required is True
 
     def test_yaml_loader_with_retry_config(self):
         """Template with retry config should parse correctly."""
-        file = YamlLoader.get_template_from_file(str(TEST_DIR / "example-retry.yaml"))
+        file = load_template("example-retry.yaml")
         assert file.retry is not None
         assert file.retry.max_retries == 5
         assert file.retry.backoff_factor == 1.0
 
     def test_yaml_loader_array_output(self):
         """Template with array output should parse correctly."""
-        file = YamlLoader.get_template_from_file(str(TEST_DIR / "example-array.yaml"))
+        file = load_template("example-array.yaml")
         assert file.output.is_array is True
         assert file.output.array_path == "data.results"
 

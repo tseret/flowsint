@@ -1,14 +1,10 @@
-from typing import List
+from typing import List, Optional
 
 from ..dockertool import DockerTool
 
 
 class MapcidrTool(DockerTool):
     image = "projectdiscovery/mapcidr"
-    default_tag = "latest"
-
-    def __init__(self):
-        super().__init__(self.image, self.default_tag)
 
     @classmethod
     def name(cls) -> str:
@@ -21,9 +17,6 @@ class MapcidrTool(DockerTool):
     @classmethod
     def category(cls) -> str:
         return "Network utilities"
-
-    def install(self) -> None:
-        super().install()
 
     def version(self) -> str:
         try:
@@ -43,22 +36,15 @@ class MapcidrTool(DockerTool):
         except Exception as e:
             return f"unknown (error: {str(e)})"
 
-    def update(self) -> None:
-        # Pull the latest image
-        self.install()
-
-    def is_installed(self) -> bool:
-        return super().is_installed()
-
     def launch(
         self,
         cidr: str,
-        slice_by: int = None,
+        slice_by: Optional[int] = None,
         aggregate: bool = False,
         shuffle_ips: bool = False,
         shuffle_ports: bool = False,
         count: bool = False,
-        api_key: str = None,
+        api_key: Optional[str] = None,
     ) -> List[str]:
         """
         Run mapcidr to expand CIDR ranges into IPs.

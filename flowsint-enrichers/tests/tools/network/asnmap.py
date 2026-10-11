@@ -18,10 +18,6 @@ def test_category():
     assert tool.category() == "ASN discovery"
 
 
-def test_image():
-    assert tool.get_image() == "projectdiscovery/asnmap"
-
-
 def test_install():
     tool.install()
     assert tool.is_installed() is True

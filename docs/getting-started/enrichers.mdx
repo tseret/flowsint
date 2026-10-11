@@ -51,3 +51,43 @@ Creating your own enrichers invloves multiple steps, but is not that trivial.
 If you plan on writting your own enrichers and think they could help the community, please contribute by making a pull request !
 
 Please refer to [this section](/docs/developers/managing-enrichers) to start building your own enrichers.
+# Infrastructure capabilities
+
+The **Enrichers** catalog shows readable purpose, provider, credential readiness,
+reviewed passive/active behavior, freshness, and known output limits. Unreviewed
+behavior is labeled unknown. Catalog metadata does not authorize copilot use;
+the copilot maintains a separate explicit passive allowlist. Dummy/test entries
+are hidden from discovery while stored flows can still resolve their names.
+
+New passive capabilities:
+
+| Capability | Evidence and limits |
+| --- | --- |
+| Domain → logged certificates | crt.sh, at most 10 input domains and 100 certificate relationships per run. Log entries do not prove live endpoint deployment. |
+| Certificate → domains | Extract supplied SAN/common names locally; at most 500 domains, wildcard names excluded. |
+| Domain → DNS dependencies | VirusTotal indexed NS/MX/CNAME, at most 25 domains and 100 records per domain; requires a VirusTotal key. |
+| CIDR → routing history | RIPEstat dated routing origins, default last 30 days; requested interval at most 366 days, 10 input prefixes and 100 intervals. |
+
+CIDR expansion now supports `preview_only="true"` and string `max_results`
+(default `"256"`, maximum `"4096"`). Oversized ranges are reported as partial;
+the enricher never materializes an entire large network before applying its cap.
+Copilot use applies tighter per-action input limits and string parameters.
+
+## Provider reuse and partial results
+
+VirusTotal responses are reusable for one hour, Shodan responses for 15 minutes,
+scoped to the provider credential. Enable **Refresh** to request fresh evidence;
+refresh does not bypass shared cooldowns. Evidence cards show cached reuse and
+the original retrieval time and source scan. Provider observation dates remain
+distinct from retrieval dates.
+
+Concurrent requests share a credential-level lease. A request that cannot obtain
+it within five seconds reports partial and can be retried later. Configured Redis
+unavailability stops these lookups rather than making uncoordinated provider calls.
+Authentication and quota failures stop the affected batch. Transient retries are
+bounded; streamed JSON responses are capped at 4 MiB.
+
+Graph imports commit in batches. If a later batch fails, the scan reports partial
+and the count of confirmed graph operations; returned result counts are separate.
+Interrupted scans explicitly show when the final graph commit is uncertain.
+Duplicate task delivery reuses saved scans without repeating provider requests.

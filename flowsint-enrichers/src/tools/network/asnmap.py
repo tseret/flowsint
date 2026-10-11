@@ -1,15 +1,11 @@
 import json
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from ..dockertool import DockerTool
 
 
 class AsnmapTool(DockerTool):
     image = "projectdiscovery/asnmap"
-    default_tag = "latest"
-
-    def __init__(self):
-        super().__init__(self.image, self.default_tag)
 
     @classmethod
     def name(cls) -> str:
@@ -22,9 +18,6 @@ class AsnmapTool(DockerTool):
     @classmethod
     def category(cls) -> str:
         return "ASN discovery"
-
-    def install(self) -> None:
-        super().install()
 
     def version(self) -> str:
         try:
@@ -44,18 +37,11 @@ class AsnmapTool(DockerTool):
         except Exception as e:
             return f"unknown (error: {str(e)})"
 
-    def update(self) -> None:
-        # Pull the latest image
-        self.install()
-
-    def is_installed(self) -> bool:
-        return super().is_installed()
-
     def launch(
         self,
         item: str,
-        type: Literal["domain", "organization", "ip", "asn"] = "domain",
-        api_key: str = None,
+        type: Literal["domain", "org", "ip", "asn"] = "domain",
+        api_key: Optional[str] = None,
     ) -> Any:
         flags = {"domain": "-d", "org": "-org", "ip": "-i", "asn": "-a"}
         if type not in flags:
@@ -81,8 +67,9 @@ class AsnmapTool(DockerTool):
                     return json.loads(lines[0])
                 else:
                     # Multiple JSON objects - combine them
-                    combined_data = {
-                        "as_range": [],
+                    as_range: list[str] = []
+                    combined_data: dict[str, Any] = {
+                        "as_range": as_range,
                         "as_name": None,
                         "as_country": None,
                         "as_number": None,
@@ -94,7 +81,7 @@ class AsnmapTool(DockerTool):
                         try:
                             data = json.loads(line)
                             if "as_range" in data:
-                                combined_data["as_range"].extend(data["as_range"])
+                                as_range.extend(data["as_range"])
                             if data.get("as_name") and not combined_data["as_name"]:
                                 combined_data["as_name"] = data["as_name"]
                             if (

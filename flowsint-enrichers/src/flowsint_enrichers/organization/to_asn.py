@@ -5,6 +5,7 @@ from tools.network.asnmap import AsnmapTool
 
 from flowsint_core.core.enricher_base import Enricher
 from flowsint_core.core.logger import Logger
+from flowsint_core.core.vault import VaultProtocol
 from flowsint_enrichers.registry import flowsint_enricher
 from flowsint_types.asn import ASN
 from flowsint_types.organization import Organization
@@ -22,16 +23,16 @@ class OrgToAsnEnricher(Enricher):
         self,
         sketch_id: Optional[str] = None,
         scan_id: Optional[str] = None,
-        vault=None,
+        vault: Optional[VaultProtocol] = None,
         params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             sketch_id=sketch_id,
             scan_id=scan_id,
-            params_schema=self.get_params_schema(),
             vault=vault,
             params=params,
         )
+        self.org_asn_mapping: List[tuple[Organization, ASN]] = []
 
     @classmethod
     def required_params(cls) -> bool:
@@ -57,13 +58,10 @@ class OrgToAsnEnricher(Enricher):
     def category(cls) -> str:
         return "Organization"
 
-    @classmethod
-    def key(cls) -> str:
-        return "name"
-
     async def scan(self, data: List[InputType]) -> List[OutputType]:
         """Find ASN information for organizations using asnmap."""
         results: List[OutputType] = []
+        self.org_asn_mapping = []
         asnmap = AsnmapTool()
 
         # Retrieve API key from vault or environment
@@ -74,17 +72,15 @@ class OrgToAsnEnricher(Enricher):
                 # Use asnmap tool to get ASN info, passing the API key
                 asn_data = asnmap.launch(org.name, type="org", api_key=api_key)
                 if asn_data and "as_number" in asn_data:
-                    # Parse ASN number from string like "AS16276" to integer 16276
-                    asn_string = asn_data["as_number"]
-                    asn_number = int(asn_string.replace("AS", "").replace("as", ""))
-                    # Create ASN object with correct field mapping
+                    # asn_str is required; the validator normalizes "as16276" and derives number
                     asn = ASN(
-                        number=asn_number,
+                        asn_str=asn_data["as_number"],
                         name=asn_data.get("as_name", ""),
                         country=asn_data.get("as_country", ""),
                         description=asn_data.get("as_name", ""),
                     )
                     results.append(asn)
+                    self.org_asn_mapping.append((org, asn))
                     Logger.info(
                         self.sketch_id,
                         {
@@ -110,8 +106,9 @@ class OrgToAsnEnricher(Enricher):
     def postprocess(
         self, results: List[OutputType], original_input: List[InputType]
     ) -> List[OutputType]:
-        # Create Neo4j relationships between organizations and their corresponding ASNs
-        for input_org, result_asn in zip(original_input, results):
+        # Create Neo4j relationships between organizations and their corresponding ASNs.
+        # Pairs come from scan: zipping inputs with results misaligns when a lookup fails.
+        for input_org, result_asn in self.org_asn_mapping:
             # Skip if no valid ASN was found
             if result_asn.number == 0:
                 continue
