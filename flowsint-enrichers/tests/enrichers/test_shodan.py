@@ -36,7 +36,7 @@ class _Resp:
         self.status_code = status
         self._payload = payload
 
-    headers = {}
+    headers: dict[str, str] = {}
 
     def close(self):
         pass

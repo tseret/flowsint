@@ -30,7 +30,7 @@ class Response:
         self.status_code = status
         self.payload = payload or {}
 
-    headers = {}
+    headers: dict[str, str] = {}
 
     def close(self):
         pass

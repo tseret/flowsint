@@ -20,7 +20,7 @@ class _Resp:
     def __init__(self, payload, status=200):
         self._payload, self.status_code, self.text = payload, status, "body"
 
-    headers = {}
+    headers: dict[str, str] = {}
 
     def close(self):
         pass
